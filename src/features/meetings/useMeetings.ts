@@ -1,7 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { QK } from '../../constants'
-import type { MeetingInsert, MeetingUpdate } from '../../types/app'
 import { toast } from 'sonner'
 
 export function useMeetings() {
@@ -37,15 +36,29 @@ export function useMeeting(id: string) {
 export function useCreateMeeting() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: async (payload: MeetingInsert) => {
-      const { data, error } = await supabase.from('meetings').insert(payload).select().single()
+    mutationFn: async (payload: {
+      title: string
+      description: string | null
+      date: string
+      colleagues_ids: string[] | null
+      successes: string[]
+      failures: string[]
+      sensitive_points: string[]
+      relational_points: string[]
+      created_by_user_id: string | null
+    }) => {
+      const { data, error } = await supabase
+        .from('meetings')
+        .insert(payload)
+        .select()
+        .single()
       if (error) throw error
       return data
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: QK.MEETINGS })
       qc.invalidateQueries({ queryKey: QK.DASHBOARD })
-      toast.success('Réunion créée')
+      toast.success('Réunion créée avec succès')
     },
     onError: (e: any) => toast.error(e.message),
   })
@@ -54,8 +67,13 @@ export function useCreateMeeting() {
 export function useUpdateMeeting() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: async ({ id, ...payload }: MeetingUpdate & { id: string }) => {
-      const { data, error } = await supabase.from('meetings').update(payload).eq('id', id).select().single()
+    mutationFn: async ({ id, ...payload }: any) => {
+      const { data, error } = await supabase
+        .from('meetings')
+        .update(payload)
+        .eq('id', id)
+        .select()
+        .single()
       if (error) throw error
       return data
     },
