@@ -168,10 +168,13 @@ export function AuthPage() {
       <div style={{
         flex: 1,
         display: 'flex', flexDirection: 'column', justifyContent: 'center',
-        padding: '48px 56px',
+        alignItems: 'flex-end',                  /* colle le contenu vers le formulaire */
+        padding: '48px 64px 48px 48px',
         position: 'relative', zIndex: 1,
         borderRight: '1px solid rgba(0,229,160,0.08)',
       }}>
+        {/* Contenu limité en largeur pour rester proche du formulaire */}
+        <div style={{ width: '100%', maxWidth: 480 }}>
         {/* Logo */}
         <div style={{ marginBottom: 48, animation: 'fadeUp 0.6s ease forwards' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -238,7 +241,8 @@ export function AuthPage() {
             · Conçu en France 🇫🇷
           </span>
         </div>
-      </div>
+        </div>{/* fin maxWidth 480 */}
+      </div>{/* fin left panel */}
 
       {/* ── Right panel : form ── */}
       <div style={{
