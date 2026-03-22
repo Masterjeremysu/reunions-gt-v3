@@ -170,12 +170,9 @@ export function AuthPage() {
   return (
     <div style={{
       minHeight: '100vh', background: '#050709',
-      display: 'flex', alignItems: 'center', justifyContent: 'center',
-      position: 'relative', overflow: 'hidden',
+      display: 'flex', position: 'relative', overflow: 'hidden',
       fontFamily: 'system-ui, sans-serif',
     }}>
-      {/* Wrapper centré */}
-      <div style={{ display: 'flex', width: '100%', maxWidth: 1100, minHeight: '100vh', position: 'relative', zIndex: 1 }}>
       <style>{`
         @keyframes scanline {
           0% { top: -2px; }
@@ -204,8 +201,8 @@ export function AuthPage() {
 
       {/* ── Left panel ── */}
       <div style={{
-        flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
-        padding: '48px 56px', position: 'relative',
+        flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center',
+        padding: '48px 8% 48px 10%', position: 'relative', zIndex: 1,
         borderRight: '1px solid rgba(0,229,160,0.08)',
       }}>
         {/* Logo */}
@@ -280,8 +277,8 @@ export function AuthPage() {
 
       {/* ── Right panel : form ── */}
       <div style={{
-        width: 440, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
-        padding: '48px 40px', position: 'relative',
+        width: 460, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+        padding: '48px 5% 48px 4%', position: 'relative', zIndex: 1,
       }}>
         <div style={{ width: '100%', animation: 'fadeUp 0.6s 0.1s ease both' }}>
 
@@ -415,7 +412,6 @@ export function AuthPage() {
           </p>
         </div>
       </div>
-      </div>{/* fin wrapper centré */}
     </div>
   )
 }
