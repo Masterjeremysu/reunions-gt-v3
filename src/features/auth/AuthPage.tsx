@@ -415,3 +415,33 @@ export function AuthPage() {
     </div>
   )
 }
+
+// ─── Auth Guard ───────────────────────────────────────────────────────────────
+export function AuthGuard({ children }: { children: React.ReactNode }) {
+  const { session, loading } = useAuth()
+
+  if (loading) return (
+    <div style={{ minHeight: '100vh', background: '#050709', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16 }}>
+        <div style={{
+          width: 36, height: 36, background: '#00E5A0', borderRadius: 8,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          animation: 'pulse-ring 2.5s ease-in-out infinite',
+        }}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#050709" strokeWidth="2.5" strokeLinecap="round">
+            <rect x="3" y="4" width="18" height="18" rx="2"/>
+            <line x1="16" y1="2" x2="16" y2="6"/>
+            <line x1="8" y1="2" x2="8" y2="6"/>
+            <line x1="3" y1="10" x2="21" y2="10"/>
+          </svg>
+        </div>
+        <p style={{ fontSize: 11, color: '#00E5A0', fontFamily: "'DM Mono', monospace", letterSpacing: '0.12em' }}>
+          CHARGEMENT...
+        </p>
+      </div>
+    </div>
+  )
+
+  if (!session) return <Navigate to={ROUTES.LOGIN} replace />
+  return <>{children}</>
+}
