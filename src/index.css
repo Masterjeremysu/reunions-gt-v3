@@ -29,12 +29,32 @@
 
 @layer components {
   .input {
-    @apply w-full bg-[#1e2333] border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-slate-600 outline-none focus:border-teal-500 transition-colors;
+    width: 100%;
+    background-color: #1e2333;
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    font-size: 0.875rem;
+    color: #e8eaf0;
+    outline: none;
+    transition: border-color 0.15s;
   }
+  .input::placeholder { color: #475569; }
+  .input:focus { border-color: #1D9E75; }
 
   .btn-primary {
-    @apply bg-teal-600 hover:bg-teal-700 text-white rounded-lg px-4 py-2 text-sm font-medium transition-colors disabled:opacity-50 disabled:pointer-events-none;
+    background-color: #1D9E75;
+    color: white;
+    border-radius: 0.5rem;
+    padding: 0.5rem 1rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    transition: background-color 0.15s;
+    border: none;
+    cursor: pointer;
   }
+  .btn-primary:hover { background-color: #158c62; }
+  .btn-primary:disabled { opacity: 0.5; pointer-events: none; }
 
   .line-clamp-3 {
     display: -webkit-box;
