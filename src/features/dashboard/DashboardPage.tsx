@@ -1,4 +1,4 @@
-import { useMemo, useState, useRef, useCallback } from 'react'
+import { useMemo, useState } from 'react'
 import { useMeetings } from '../meetings/useMeetings'
 import { useActions } from '../actions/useActions'
 import { useColleagues } from '../colleagues/useColleagues'
@@ -258,46 +258,6 @@ function LeavesWidget({ onNavigate }: { onNavigate: () => void }) {
 // ─── Main Dashboard ───────────────────────────────────────────────────────────
 export function DashboardPage() {
   const navigate = useNavigate()
-
-  // ── Drag & drop widget order ──────────────────────────────────────────────
-  const WIDS = ['activity','cr_breakdown','team_perf','mood','upcoming_meetings','alerts','leaves','urgent_actions','vehicles'] as const
-  type WId = typeof WIDS[number]
-  const LS_KEY = 'dash_order_v1'
-  const loadOrder = (): WId[] => {
-    try { const s = localStorage.getItem(LS_KEY); if (s) { const p = JSON.parse(s) as WId[]; const v = p.filter((id: WId) => WIDS.includes(id)); return [...v, ...WIDS.filter(id => !v.includes(id))] } } catch {}
-    return [...WIDS]
-  }
-  const [wOrder, setWOrder] = useState<WId[]>(loadOrder)
-  const dragRef = useRef<WId | null>(null)
-  const [dragging, setDragging] = useState<WId | null>(null)
-  const [dragOver, setDragOver] = useState<WId | null>(null)
-  const doDragStart = useCallback((id: WId) => { dragRef.current = id; setDragging(id) }, [])
-  const doDragEnter = useCallback((id: WId) => setDragOver(id), [])
-  const doDragEnd = useCallback(() => {
-    const from = dragRef.current; const to = dragOver
-    if (from && to && from !== to) {
-      setWOrder(prev => {
-        const n = [...prev]; const fi = n.indexOf(from); const ti = n.indexOf(to)
-        n.splice(fi, 1); n.splice(ti, 0, from)
-        try { localStorage.setItem(LS_KEY, JSON.stringify(n)) } catch {}
-        return n
-      })
-    }
-    dragRef.current = null; setDragging(null); setDragOver(null)
-  }, [dragOver])
-  const resetOrder = useCallback(() => {
-    setWOrder([...WIDS]); try { localStorage.setItem(LS_KEY, JSON.stringify([...WIDS])) } catch {}
-  }, [])
-  const DW = ({ id, children }: { id: WId; children: React.ReactNode }) => (
-    <div draggable
-      onDragStart={() => doDragStart(id)} onDragEnd={doDragEnd}
-      onDragEnter={() => doDragEnter(id)} onDragLeave={() => dragOver === id && setDragOver(null)}
-      onDragOver={e => e.preventDefault()}
-      style={{ opacity: dragging === id ? 0.35 : 1, outline: dragOver === id && dragging !== id ? '2px dashed rgba(29,158,117,0.5)' : 'none', outlineOffset: 3, borderRadius: 14, transition: 'opacity 0.15s', cursor: 'grab', userSelect: 'none' as const }}>
-      {children}
-    </div>
-  )
-
   const { data: meetings, isLoading: mLoading } = useMeetings()
   const { data: actions, isLoading: aLoading } = useActions()
   const { data: colleagues } = useColleagues()
@@ -427,12 +387,10 @@ export function DashboardPage() {
               }
             </p>
           </div>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <button onClick={resetOrder} style={{ fontSize: 10, color: 'rgba(255,255,255,0.25)', background: 'none', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 6, padding: '6px 10px', cursor: 'pointer', fontFamily: 'monospace' }}>↺ Reset</button>
-            <button onClick={() => navigate(ROUTES.MEETINGS)} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 16px', background: '#1D9E75', border: 'none', borderRadius: 10, color: '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
-              <CalendarDays style={{ width: 14, height: 14 }} /> Nouvelle réunion
-            </button>
-          </div>
+          <button onClick={() => navigate(ROUTES.MEETINGS)}
+            style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 16px', background: '#1D9E75', border: 'none', borderRadius: 10, color: '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
+            <CalendarDays style={{ width: 14, height: 14 }} /> Nouvelle réunion
+          </button>
         </div>
 
         {/* KPI row */}
@@ -445,218 +403,221 @@ export function DashboardPage() {
         </div>
       </div>
 
-      {/* ── Drag hint ── */}
-      <div style={{ padding: '4px 28px 0' }}>
-        <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.12)', fontFamily: 'monospace' }}>⠿ Glissez les widgets pour réorganiser · sauvegardé automatiquement</span>
-      </div>
-
-      {/* ── Main grid dynamique ── */}
-      <div style={{ padding: '12px 28px 28px', display: 'grid', gridTemplateColumns: '1fr 1fr 320px', gap: 16, alignItems: 'start' }}>
+      {/* ── Main grid ── */}
+      <div style={{ padding: '20px 28px', display: 'grid', gridTemplateColumns: '1fr 1fr 320px', gap: 16 }}>
 
         {/* Col 1 */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          {wOrder.filter(id => ['activity', 'cr_breakdown'].includes(id)).map(id => (
-            <DW key={id} id={id as WId}>
-              {id === 'activity' && (
-                <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 14, padding: '18px 20px' }}>
-                  <SectionTitle>Activité — 8 dernières semaines</SectionTitle>
-                  <ResponsiveContainer width="100%" height={180}>
-                    <AreaChart data={weeklyData} margin={{ top: 4, right: 0, bottom: 0, left: -28 }}>
-                      <defs>
-                        <linearGradient id="gM" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#1D9E75" stopOpacity={0.3}/><stop offset="95%" stopColor="#1D9E75" stopOpacity={0}/></linearGradient>
-                        <linearGradient id="gA" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#378ADD" stopOpacity={0.2}/><stop offset="95%" stopColor="#378ADD" stopOpacity={0}/></linearGradient>
-                      </defs>
-                      <XAxis dataKey="week" tick={{ fill: '#565c75', fontSize: 10, fontFamily: 'monospace' }} axisLine={false} tickLine={false} />
-                      <YAxis tick={{ fill: '#565c75', fontSize: 10 }} axisLine={false} tickLine={false} allowDecimals={false} />
-                      <Tooltip content={<CustomTooltip />} />
-                      <Area type="monotone" dataKey="réunions" stroke="#1D9E75" strokeWidth={2} fill="url(#gM)" dot={false} />
-                      <Area type="monotone" dataKey="actions" stroke="#378ADD" strokeWidth={1.5} fill="url(#gA)" dot={false} strokeDasharray="4 2" />
-                    </AreaChart>
-                  </ResponsiveContainer>
-                  <div style={{ display: 'flex', gap: 16, marginTop: 8 }}>
-                    {[['#1D9E75', 'Réunions'], ['#378ADD', 'Actions']].map(([c, l]) => (
-                      <span key={l} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: 'rgba(255,255,255,0.35)', fontFamily: 'monospace' }}>
-                        <span style={{ width: 16, height: 2, background: c, borderRadius: 1, display: 'inline-block' }} />{l}
-                      </span>
-                    ))}
+
+          {/* Activity chart */}
+          <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 14, padding: '18px 20px' }}>
+            <SectionTitle>Activité — 8 dernières semaines</SectionTitle>
+            <ResponsiveContainer width="100%" height={180}>
+              <AreaChart data={weeklyData} margin={{ top: 4, right: 0, bottom: 0, left: -28 }}>
+                <defs>
+                  <linearGradient id="gM" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#1D9E75" stopOpacity={0.3} />
+                    <stop offset="95%" stopColor="#1D9E75" stopOpacity={0} />
+                  </linearGradient>
+                  <linearGradient id="gA" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#378ADD" stopOpacity={0.2} />
+                    <stop offset="95%" stopColor="#378ADD" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <XAxis dataKey="week" tick={{ fill: '#565c75', fontSize: 10, fontFamily: 'monospace' }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fill: '#565c75', fontSize: 10 }} axisLine={false} tickLine={false} allowDecimals={false} />
+                <Tooltip content={<CustomTooltip />} />
+                <Area type="monotone" dataKey="réunions" stroke="#1D9E75" strokeWidth={2} fill="url(#gM)" dot={false} />
+                <Area type="monotone" dataKey="actions" stroke="#378ADD" strokeWidth={1.5} fill="url(#gA)" dot={false} strokeDasharray="4 2" />
+              </AreaChart>
+            </ResponsiveContainer>
+            <div style={{ display: 'flex', gap: 16, marginTop: 8 }}>
+              {[['#1D9E75', 'Réunions'], ['#378ADD', 'Actions']].map(([c, l]) => (
+                <span key={l} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: 'rgba(255,255,255,0.35)', fontFamily: 'monospace' }}>
+                  <span style={{ width: 16, height: 2, background: c, borderRadius: 1, display: 'inline-block' }} />{l}
+                </span>
+              ))}
+            </div>
+          </div>
+
+          {/* CR breakdown */}
+          <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 14, padding: '18px 20px' }}>
+            <SectionTitle>Analyse CR — 20 dernières réunions</SectionTitle>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+              {[
+                { label: 'Succès', value: crStats.successes, color: '#1D9E75' },
+                { label: 'Défauts', value: crStats.failures, color: '#E24B4A' },
+                { label: 'Sensibles', value: crStats.sensitive, color: '#EF9F27' },
+                { label: 'Relationnels', value: crStats.relational, color: '#7F77DD' },
+              ].map(s => {
+                const total = crStats.successes + crStats.failures + crStats.sensitive + crStats.relational
+                const pct = total > 0 ? Math.round((s.value / total) * 100) : 0
+                return (
+                  <div key={s.label} style={{ background: `${s.color}08`, border: `1px solid ${s.color}20`, borderRadius: 10, padding: '12px 14px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+                      <span style={{ fontSize: 11, color: s.color, fontFamily: 'monospace', fontWeight: 600 }}>{s.label}</span>
+                      <span style={{ fontSize: 10, color: `${s.color}80`, fontFamily: 'monospace' }}>{pct}%</span>
+                    </div>
+                    <span style={{ fontSize: 26, fontWeight: 800, color: '#fff', fontFamily: 'monospace' }}>{s.value}</span>
+                    <div style={{ marginTop: 6, height: 3, background: 'rgba(255,255,255,0.06)', borderRadius: 2, overflow: 'hidden' }}>
+                      <div style={{ height: '100%', width: `${pct}%`, background: s.color, borderRadius: 2, transition: 'width 0.8s ease' }} />
+                    </div>
                   </div>
-                </div>
-              )}
-              {id === 'cr_breakdown' && (
-                <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 14, padding: '18px 20px' }}>
-                  <SectionTitle>Analyse CR — 20 dernières réunions</SectionTitle>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                    {[
-                      { label: 'Succès', value: crStats.successes, color: '#1D9E75' },
-                      { label: 'Défauts', value: crStats.failures, color: '#E24B4A' },
-                      { label: 'Sensibles', value: crStats.sensitive, color: '#EF9F27' },
-                      { label: 'Relationnels', value: crStats.relational, color: '#7F77DD' },
-                    ].map(s => {
-                      const total = crStats.successes + crStats.failures + crStats.sensitive + crStats.relational
-                      const pct = total > 0 ? Math.round((s.value / total) * 100) : 0
-                      return (
-                        <div key={s.label} style={{ background: `${s.color}08`, border: `1px solid ${s.color}20`, borderRadius: 10, padding: '12px 14px' }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
-                            <span style={{ fontSize: 11, color: s.color, fontFamily: 'monospace', fontWeight: 600 }}>{s.label}</span>
-                            <span style={{ fontSize: 10, color: `${s.color}80`, fontFamily: 'monospace' }}>{pct}%</span>
-                          </div>
-                          <span style={{ fontSize: 26, fontWeight: 800, color: '#fff', fontFamily: 'monospace' }}>{s.value}</span>
-                          <div style={{ marginTop: 6, height: 3, background: 'rgba(255,255,255,0.06)', borderRadius: 2, overflow: 'hidden' }}>
-                            <div style={{ height: '100%', width: `${pct}%`, background: s.color, borderRadius: 2, transition: 'width 0.8s ease' }} />
-                          </div>
-                        </div>
-                      )
-                    })}
-                  </div>
-                </div>
-              )}
-            </DW>
-          ))}
+                )
+              })}
+            </div>
+          </div>
         </div>
 
         {/* Col 2 */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          {wOrder.filter(id => ['team_perf', 'mood', 'upcoming_meetings'].includes(id)).map(id => (
-            <DW key={id} id={id as WId}>
-              {id === 'team_perf' && colleaguePerf.length > 0 && (
-                <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 14, padding: '18px 20px' }}>
-                  <SectionTitle action="Voir équipe" onAction={() => navigate(ROUTES.COLLEAGUES)}>Performance équipe</SectionTitle>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                    {colleaguePerf.map((c, i) => (
-                      <div key={c.name} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                        <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.2)', fontFamily: 'monospace', width: 14, textAlign: 'right', flexShrink: 0 }}>{i + 1}</span>
-                        <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.7)', width: 72, flexShrink: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</span>
-                        <div style={{ flex: 1, height: 6, background: 'rgba(255,255,255,0.05)', borderRadius: 3, overflow: 'hidden' }}>
-                          <div style={{ height: '100%', width: `${c.rate}%`, background: c.rate >= 80 ? '#1D9E75' : c.rate >= 50 ? '#EF9F27' : '#E24B4A', borderRadius: 3, transition: 'width 0.6s ease' }} />
-                        </div>
-                        <span style={{ fontSize: 11, fontWeight: 700, color: c.rate >= 80 ? '#1D9E75' : c.rate >= 50 ? '#EF9F27' : '#E24B4A', fontFamily: 'monospace', width: 36, textAlign: 'right', flexShrink: 0 }}>{c.rate}%</span>
-                        {c.late > 0 && <span style={{ fontSize: 9, color: '#F09595', background: '#E24B4A15', borderRadius: 20, padding: '1px 5px', fontFamily: 'monospace' }}>+{c.late}</span>}
+
+          {/* Team performance */}
+          {colleaguePerf.length > 0 && (
+            <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 14, padding: '18px 20px' }}>
+              <SectionTitle action="Voir équipe" onAction={() => navigate(ROUTES.COLLEAGUES)}>Performance équipe</SectionTitle>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {colleaguePerf.map((c, i) => (
+                  <div key={c.name} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.2)', fontFamily: 'monospace', width: 14, textAlign: 'right', flexShrink: 0 }}>{i + 1}</span>
+                    <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.7)', width: 72, flexShrink: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</span>
+                    <div style={{ flex: 1, height: 6, background: 'rgba(255,255,255,0.05)', borderRadius: 3, overflow: 'hidden' }}>
+                      <div style={{ height: '100%', width: `${c.rate}%`, background: c.rate >= 80 ? '#1D9E75' : c.rate >= 50 ? '#EF9F27' : '#E24B4A', borderRadius: 3, transition: 'width 0.6s ease' }} />
+                    </div>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: c.rate >= 80 ? '#1D9E75' : c.rate >= 50 ? '#EF9F27' : '#E24B4A', fontFamily: 'monospace', width: 36, textAlign: 'right', flexShrink: 0 }}>{c.rate}%</span>
+                    {c.late > 0 && <span style={{ fontSize: 9, color: '#F09595', background: '#E24B4A15', borderRadius: 20, padding: '1px 5px', fontFamily: 'monospace' }}>+{c.late}</span>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Mood trend */}
+          {moodTrend.length > 0 && (
+            <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 14, padding: '18px 20px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.25)', fontFamily: 'monospace', margin: 0 }}>Baromètre humeur</p>
+                {stats.avgMood && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ fontSize: 18 }}>{MOOD_EMOJI[Math.round(stats.avgMood)]}</span>
+                    <span style={{ fontSize: 16, fontWeight: 800, color: MOOD_COLOR[Math.round(stats.avgMood)], fontFamily: 'monospace' }}>{stats.avgMood}/5</span>
+                  </div>
+                )}
+              </div>
+              <ResponsiveContainer width="100%" height={100}>
+                <AreaChart data={moodTrend} margin={{ top: 4, right: 0, bottom: 0, left: -32 }}>
+                  <defs>
+                    <linearGradient id="gMood" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#7F77DD" stopOpacity={0.3} />
+                      <stop offset="95%" stopColor="#7F77DD" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <XAxis dataKey="date" tick={{ fill: '#565c75', fontSize: 9, fontFamily: 'monospace' }} axisLine={false} tickLine={false} />
+                  <YAxis domain={[1, 5]} ticks={[1, 3, 5]} tick={{ fill: '#565c75', fontSize: 9 }} axisLine={false} tickLine={false} />
+                  <Tooltip content={<CustomTooltip />} />
+                  <Area type="monotone" dataKey="score" stroke="#7F77DD" strokeWidth={2} fill="url(#gMood)" dot={{ fill: '#7F77DD', r: 2, strokeWidth: 0 }} />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+
+          {/* Upcoming meetings */}
+          {upcomingMeetings.length > 0 && (
+            <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 14, padding: '18px 20px' }}>
+              <SectionTitle action="Toutes" onAction={() => navigate(ROUTES.MEETINGS)}>Prochaines réunions</SectionTitle>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {upcomingMeetings.map(m => {
+                  const d = new Date(m.date)
+                  const daysLeft = differenceInDays(d, new Date())
+                  return (
+                    <div key={m.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: 10, cursor: 'pointer' }}
+                      onClick={() => navigate(ROUTES.MEETINGS)}>
+                      <div style={{ width: 36, height: 36, borderRadius: 8, background: '#1D9E7512', border: '1px solid #1D9E7525', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                        <span style={{ fontSize: 14, fontWeight: 800, color: '#5DCAA5', lineHeight: 1 }}>{format(d, 'd')}</span>
+                        <span style={{ fontSize: 8, color: '#1D9E75', textTransform: 'uppercase' }}>{format(d, 'MMM', { locale: fr })}</span>
                       </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-              {id === 'mood' && moodTrend.length > 0 && (
-                <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 14, padding: '18px 20px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-                    <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.25)', fontFamily: 'monospace', margin: 0 }}>Baromètre humeur</p>
-                    {stats.avgMood && (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <span style={{ fontSize: 18 }}>{MOOD_EMOJI[Math.round(stats.avgMood)]}</span>
-                        <span style={{ fontSize: 16, fontWeight: 800, color: MOOD_COLOR[Math.round(stats.avgMood)], fontFamily: 'monospace' }}>{stats.avgMood}/5</span>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <p style={{ fontSize: 12, fontWeight: 500, color: 'rgba(255,255,255,0.8)', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.title}</p>
+                        <p style={{ fontSize: 10, color: 'rgba(255,255,255,0.3)', margin: '2px 0 0', fontFamily: 'monospace' }}>
+                          {daysLeft === 0 ? "Aujourd'hui" : daysLeft === 1 ? 'Demain' : `Dans ${daysLeft} jours`}
+                          {format(d, 'HH:mm') !== '00:00' && ` · ${format(d, 'HH:mm')}`}
+                        </p>
                       </div>
-                    )}
-                  </div>
-                  <ResponsiveContainer width="100%" height={100}>
-                    <AreaChart data={moodTrend} margin={{ top: 4, right: 0, bottom: 0, left: -32 }}>
-                      <defs>
-                        <linearGradient id="gMood" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#7F77DD" stopOpacity={0.3}/><stop offset="95%" stopColor="#7F77DD" stopOpacity={0}/></linearGradient>
-                      </defs>
-                      <XAxis dataKey="date" tick={{ fill: '#565c75', fontSize: 9, fontFamily: 'monospace' }} axisLine={false} tickLine={false} />
-                      <YAxis domain={[1, 5]} ticks={[1, 3, 5]} tick={{ fill: '#565c75', fontSize: 9 }} axisLine={false} tickLine={false} />
-                      <Tooltip content={<CustomTooltip />} />
-                      <Area type="monotone" dataKey="score" stroke="#7F77DD" strokeWidth={2} fill="url(#gMood)" dot={{ fill: '#7F77DD', r: 2, strokeWidth: 0 }} />
-                    </AreaChart>
-                  </ResponsiveContainer>
-                </div>
-              )}
-              {id === 'upcoming_meetings' && upcomingMeetings.length > 0 && (
-                <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 14, padding: '18px 20px' }}>
-                  <SectionTitle action="Toutes" onAction={() => navigate(ROUTES.MEETINGS)}>Prochaines réunions</SectionTitle>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                    {upcomingMeetings.map(m => {
-                      const d = new Date(m.date)
-                      const daysLeft = differenceInDays(d, new Date())
-                      return (
-                        <div key={m.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: 10, cursor: 'pointer' }}
-                          onClick={() => navigate(ROUTES.MEETINGS)}>
-                          <div style={{ width: 36, height: 36, borderRadius: 8, background: '#1D9E7512', border: '1px solid #1D9E7525', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                            <span style={{ fontSize: 14, fontWeight: 800, color: '#5DCAA5', lineHeight: 1 }}>{format(d, 'd')}</span>
-                            <span style={{ fontSize: 8, color: '#1D9E75', textTransform: 'uppercase' }}>{format(d, 'MMM', { locale: fr })}</span>
-                          </div>
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <p style={{ fontSize: 12, fontWeight: 500, color: 'rgba(255,255,255,0.8)', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.title}</p>
-                            <p style={{ fontSize: 10, color: 'rgba(255,255,255,0.3)', margin: '2px 0 0', fontFamily: 'monospace' }}>
-                              {daysLeft === 0 ? "Aujourd'hui" : daysLeft === 1 ? 'Demain' : `Dans ${daysLeft} jours`}
-                              {format(d, 'HH:mm') !== '00:00' && ` · ${format(d, 'HH:mm')}`}
-                            </p>
-                          </div>
-                        </div>
-                      )
-                    })}
-                  </div>
-                </div>
-              )}
-            </DW>
-          ))}
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
         </div>
 
-        {/* Col 3 */}
+        {/* Col 3 — alertes + congés + actions urgentes */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          {wOrder.filter(id => ['alerts', 'leaves', 'urgent_actions', 'vehicles'].includes(id)).map(id => (
-            <DW key={id} id={id as WId}>
-              {id === 'alerts' && (
-                <div style={{ background: 'rgba(255,255,255,0.02)', border: alerts.some(a => a.level === 'critical') ? '1px solid #E24B4A25' : '1px solid rgba(255,255,255,0.06)', borderRadius: 14, padding: '18px 20px' }}>
-                  <SectionTitle>Alertes actives</SectionTitle>
-                  {alerts.length === 0 ? (
-                    <div style={{ textAlign: 'center', padding: '16px 0', color: '#1D9E75', fontSize: 13 }}>
-                      <Award style={{ width: 24, height: 24, margin: '0 auto 8px', display: 'block', opacity: 0.6 }} />
-                      Tout est sous contrôle
-                    </div>
-                  ) : alerts.map((a, i) => (
-                    <AlertItem key={i} level={a.level} title={a.title} sub={a.sub} action={a.action} onClick={() => navigate(a.route)} />
-                  ))}
-                </div>
-              )}
-              {id === 'leaves' && <LeavesWidget onNavigate={() => navigate('/leaves')} />}
-              {id === 'urgent_actions' && urgentActions.length > 0 && (
-                <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 14, padding: '18px 20px' }}>
-                  <SectionTitle action="Voir tout" onAction={() => navigate(ROUTES.ACTIONS)}>Actions urgentes</SectionTitle>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-                    {urgentActions.map(a => {
-                      const late = a.due_date && isOverdue(a.due_date)
-                      const c = colleagues?.find(col => col.id === a.assigned_to_colleague_id)
-                      return (
-                        <div key={a.id} style={{ display: 'flex', gap: 8, padding: '8px 10px', background: late ? '#E24B4A06' : 'rgba(255,255,255,0.02)', border: `1px solid ${late ? '#E24B4A20' : 'rgba(255,255,255,0.05)'}`, borderRadius: 8, cursor: 'pointer' }}
-                          onClick={() => navigate(ROUTES.ACTIONS)}>
-                          <div style={{ width: 5, height: 5, borderRadius: '50%', background: late ? '#E24B4A' : '#EF9F27', flexShrink: 0, marginTop: 5 }} />
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.75)', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.description}</p>
-                            <p style={{ fontSize: 10, color: late ? '#F09595' : 'rgba(255,255,255,0.3)', margin: '1px 0 0', fontFamily: 'monospace' }}>
-                              {c?.name}{c && a.due_date && ' · '}{a.due_date && fDate(a.due_date)}{late && ' · En retard'}
-                            </p>
-                          </div>
-                        </div>
-                      )
-                    })}
-                  </div>
-                </div>
-              )}
-              {id === 'vehicles' && vehicles && vehicles.length > 0 && (
-                <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 14, padding: '18px 20px' }}>
-                  <SectionTitle action="Parc auto" onAction={() => navigate(ROUTES.VEHICLES)}>Véhicules</SectionTitle>
-                  {vehicles.slice(0, 4).map(v => {
-                    const vInsp = (allInspections ?? []).filter((i: any) => i.vehicle_id === v.id)
-                    const expired = vInsp.filter((i: any) => i.status === 'overdue').length
-                    const soon = vInsp.filter((i: any) => isDueSoon(i.due_date, 30)).length
-                    const color = expired > 0 ? '#E24B4A' : soon > 0 ? '#EF9F27' : '#1D9E75'
-                    return (
-                      <div key={v.id} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
-                        <div style={{ width: 6, height: 6, borderRadius: '50%', background: color, flexShrink: 0 }} />
-                        <span style={{ flex: 1, fontSize: 12, color: 'rgba(255,255,255,0.6)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v.name}</span>
-                        <span style={{ fontSize: 9, color, fontFamily: 'monospace' }}>
-                          {expired > 0 ? `${expired} exp.` : soon > 0 ? `${soon} bientôt` : 'OK'}
-                        </span>
+
+          {/* Alerts */}
+          <div style={{ background: 'rgba(255,255,255,0.02)', border: alerts.some(a => a.level === 'critical') ? '1px solid #E24B4A25' : '1px solid rgba(255,255,255,0.06)', borderRadius: 14, padding: '18px 20px' }}>
+            <SectionTitle>Alertes actives</SectionTitle>
+            {alerts.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '16px 0', color: '#1D9E75', fontSize: 13 }}>
+                <Award style={{ width: 24, height: 24, margin: '0 auto 8px', display: 'block', opacity: 0.6 }} />
+                Tout est sous contrôle
+              </div>
+            ) : alerts.map((a, i) => (
+              <AlertItem key={i} level={a.level} title={a.title} sub={a.sub} action={a.action} onClick={() => navigate(a.route)} />
+            ))}
+          </div>
+
+          {/* Congés widget */}
+          <LeavesWidget onNavigate={() => navigate('/leaves')} />
+
+          {/* Urgent actions */}
+          {urgentActions.length > 0 && (
+            <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 14, padding: '18px 20px' }}>
+              <SectionTitle action="Voir tout" onAction={() => navigate(ROUTES.ACTIONS)}>Actions urgentes</SectionTitle>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                {urgentActions.map(a => {
+                  const late = a.due_date && isOverdue(a.due_date)
+                  const c = colleagues?.find(col => col.id === a.assigned_to_colleague_id)
+                  return (
+                    <div key={a.id} style={{ display: 'flex', gap: 8, padding: '8px 10px', background: late ? '#E24B4A06' : 'rgba(255,255,255,0.02)', border: `1px solid ${late ? '#E24B4A20' : 'rgba(255,255,255,0.05)'}`, borderRadius: 8, cursor: 'pointer' }}
+                      onClick={() => navigate(ROUTES.ACTIONS)}>
+                      <div style={{ width: 5, height: 5, borderRadius: '50%', background: late ? '#E24B4A' : '#EF9F27', flexShrink: 0, marginTop: 5 }} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.75)', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.description}</p>
+                        <p style={{ fontSize: 10, color: late ? '#F09595' : 'rgba(255,255,255,0.3)', margin: '1px 0 0', fontFamily: 'monospace' }}>
+                          {c?.name}{c && a.due_date && ' · '}{a.due_date && fDate(a.due_date)}{late && ' · En retard'}
+                        </p>
                       </div>
-                    )
-                  })}
-                </div>
-              )}
-            </DW>
-          ))}
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Vehicles quick */}
+          {vehicles && vehicles.length > 0 && (
+            <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 14, padding: '18px 20px' }}>
+              <SectionTitle action="Parc auto" onAction={() => navigate(ROUTES.VEHICLES)}>Véhicules</SectionTitle>
+              {vehicles.slice(0, 4).map(v => {
+                const vInsp = (allInspections ?? []).filter((i: any) => i.vehicle_id === v.id)
+                const expired = vInsp.filter((i: any) => i.status === 'overdue').length
+                const soon = vInsp.filter((i: any) => isDueSoon(i.due_date, 30)).length
+                const color = expired > 0 ? '#E24B4A' : soon > 0 ? '#EF9F27' : '#1D9E75'
+                return (
+                  <div key={v.id} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+                    <div style={{ width: 6, height: 6, borderRadius: '50%', background: color, flexShrink: 0 }} />
+                    <span style={{ flex: 1, fontSize: 12, color: 'rgba(255,255,255,0.6)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v.name}</span>
+                    <span style={{ fontSize: 9, color: color, fontFamily: 'monospace' }}>
+                      {expired > 0 ? `${expired} exp.` : soon > 0 ? `${soon} bientôt` : 'OK'}
+                    </span>
+                  </div>
+                )
+              })}
+            </div>
+          )}
         </div>
       </div>
-
     </div>
   )
 }
