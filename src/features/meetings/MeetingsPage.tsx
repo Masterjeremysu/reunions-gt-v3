@@ -8,8 +8,10 @@ import { Badge, Spinner, Avatar, EmptyState } from '../../components/ui'
 import { fDate, fDateTime, isOverdue } from '../../utils'
 import { ACTION_STATUS } from '../../constants'
 import { NewMeetingModal } from './NewMeetingModal'
+import { EditMeetingModal } from './EditMeetingModal'
+import { exportMeetingPDF } from './usePDFExport'
 import {
-  CalendarDays, Plus, Search, Trash2,
+  CalendarDays, Plus, Search, Trash2, Pencil, FileDown,
   ThumbsUp, ThumbsDown, AlertCircle, Heart,
   X, Users, Check, FileText, Clock
 } from 'lucide-react'
@@ -27,17 +29,11 @@ function useCRItems(meetingId: string | null) {
         .select('*, colleagues(id, name, post)')
         .eq('meeting_id', meetingId!)
         .order('order_index', { ascending: true })
-      if (error) return [] // table peut ne pas exister encore
+      if (error) return []
       return data ?? []
     },
     staleTime: 1000 * 60 * 2,
   })
-}
-
-// Map category -> clé CR_CONF
-const CAT_MAP: Record<string, string> = {
-  success: 'successes', failure: 'failures',
-  sensitive: 'sensitive_points', relational: 'relational_points',
 }
 
 // ─── Data helpers ─────────────────────────────────────────────────────────────
@@ -45,14 +41,11 @@ function isUUID(s: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s)
 }
 
-// Parse "UUID::texte réel" OR plain text
 function parseItem(raw: string): string | null {
   const t = raw.trim()
   if (!t) return null
-  // Format UUID::text
   const match = t.match(/^[0-9a-f\-]{36}::(.+)$/i)
   if (match) return match[1].trim() || null
-  // Plain UUID with no text → skip
   if (isUUID(t)) return null
   return t
 }
@@ -63,7 +56,7 @@ function parseItems(arr: string[] | null | undefined): string[] {
 
 // ─── CR config ────────────────────────────────────────────────────────────────
 const CR_CONF = [
-  { key: 'successes',         label: 'Succès',       icon: ThumbsUp,    color: '#1D9E75', light: '#1D9E7515', border: '#1D9E7525' },
+  { key: 'successes',         label: 'Succès',       icon: ThumbsUp,    color: '#1D9E75', light: '#1D9E7515', border: '#1D9E7725' },
   { key: 'failures',          label: 'Défauts',      icon: ThumbsDown,  color: '#E24B4A', light: '#E24B4A15', border: '#E24B4A25' },
   { key: 'sensitive_points',  label: 'Sensibles',    icon: AlertCircle, color: '#EF9F27', light: '#EF9F2715', border: '#EF9F2725' },
   { key: 'relational_points', label: 'Relationnels', icon: Heart,       color: '#7F77DD', light: '#7F77DD15', border: '#7F77DD25' },
@@ -77,13 +70,13 @@ export function MeetingsPage() {
   const { data: colleagues } = useColleagues()
   const deleteMeeting = useDeleteMeeting()
 
-  const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [search, setSearch] = useState('')
-  const [showModal, setShowModal] = useState(false)
+  const [selectedId,    setSelectedId]    = useState<string | null>(null)
+  const [search,        setSearch]        = useState('')
+  const [showModal,     setShowModal]     = useState(false)
+  const [editMeeting,   setEditMeeting]   = useState<MeetingRow | null>(null)
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
-  const [crSearch, setCrSearch] = useState('')
+  const [crSearch,      setCrSearch]      = useState('')
 
-  // Full-text search across meetings + CR content
   const filtered = useMemo(() => {
     if (!meetings) return []
     const q = search.toLowerCase().trim()
@@ -91,10 +84,8 @@ export function MeetingsPage() {
     return meetings.filter(m => {
       if (m.title.toLowerCase().includes(q)) return true
       const allText = [
-        ...parseItems(m.successes),
-        ...parseItems(m.failures),
-        ...parseItems(m.sensitive_points),
-        ...parseItems(m.relational_points),
+        ...parseItems(m.successes), ...parseItems(m.failures),
+        ...parseItems(m.sensitive_points), ...parseItems(m.relational_points),
       ].join(' ').toLowerCase()
       return allText.includes(q)
     })
@@ -103,10 +94,9 @@ export function MeetingsPage() {
   const selected: MeetingRow | null = meetings?.find(m => m.id === selectedId) ?? filtered[0] ?? null
   const getColleague = (id: string) => colleagues?.find(c => c.id === id)
 
-  // CR search filter on detail
   const filteredCR = useMemo(() => {
     const q = crSearch.toLowerCase().trim()
-    if (!q) return null // null = show all
+    if (!q) return null
     const result: Record<string, string[]> = {}
     for (const conf of CR_CONF) {
       const items = parseItems(selected?.[conf.key])
@@ -124,7 +114,8 @@ export function MeetingsPage() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: '#0a0c12', overflow: 'hidden' }}>
 
-      {showModal && <NewMeetingModal onClose={() => setShowModal(false)} />}
+      {showModal   && <NewMeetingModal onClose={() => setShowModal(false)} />}
+      {editMeeting && <EditMeetingModal meeting={editMeeting} onClose={() => setEditMeeting(null)} />}
 
       {/* Delete confirm */}
       {deleteConfirm && (
@@ -155,16 +146,11 @@ export function MeetingsPage() {
 
         {/* ── Left list ── */}
         <div style={{ width: 270, flexShrink: 0, borderRight: '1px solid rgba(255,255,255,0.05)', display: 'flex', flexDirection: 'column', background: '#0a0c12' }}>
-
-          {/* Search */}
           <div style={{ padding: '10px 12px', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 8, padding: '0 10px', height: 32 }}>
               <Search style={{ width: 12, height: 12, color: 'rgba(255,255,255,0.25)', flexShrink: 0 }} />
-              <input
-                value={search} onChange={e => setSearch(e.target.value)}
-                placeholder="Rechercher..."
-                style={{ flex: 1, background: 'transparent', border: 'none', fontSize: 12, color: '#fff', outline: 'none' }}
-              />
+              <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Rechercher..."
+                style={{ flex: 1, background: 'transparent', border: 'none', fontSize: 12, color: '#fff', outline: 'none' }} />
               {search && <button onClick={() => setSearch('')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'rgba(255,255,255,0.3)', display: 'flex' }}><X style={{ width: 11, height: 11 }} /></button>}
             </div>
             {search && filtered.length > 0 && (
@@ -172,7 +158,6 @@ export function MeetingsPage() {
             )}
           </div>
 
-          {/* List */}
           <div style={{ flex: 1, overflowY: 'auto' }}>
             {isLoading && <div style={{ display: 'flex', justifyContent: 'center', padding: 32 }}><Spinner /></div>}
             {!isLoading && filtered.length === 0 && (
@@ -194,15 +179,8 @@ export function MeetingsPage() {
 
               return (
                 <button key={m.id} onClick={() => setSelectedId(m.id)}
-                  style={{
-                    width: '100%', textAlign: 'left', padding: '10px 12px',
-                    borderBottom: '1px solid rgba(255,255,255,0.03)',
-                    borderLeft: isSelected ? '2px solid #1D9E75' : '2px solid transparent',
-                    background: isSelected ? 'rgba(29,158,117,0.06)' : 'transparent',
-                    cursor: 'pointer', transition: 'all 0.12s',
-                  }}>
+                  style={{ width: '100%', textAlign: 'left', padding: '10px 12px', borderBottom: '1px solid rgba(255,255,255,0.03)', borderLeft: isSelected ? '2px solid #1D9E75' : '2px solid transparent', background: isSelected ? 'rgba(29,158,117,0.06)' : 'transparent', cursor: 'pointer', transition: 'all 0.12s' }}>
                   <div style={{ display: 'flex', gap: 10 }}>
-                    {/* Date */}
                     <div style={{ width: 32, flexShrink: 0, textAlign: 'center', paddingTop: 2 }}>
                       <div style={{ fontSize: 16, fontWeight: 600, color: isSelected ? '#1D9E75' : '#fff', lineHeight: 1 }}>{format(d, 'd')}</div>
                       <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.3)', textTransform: 'uppercase', marginTop: 2, letterSpacing: '0.05em' }}>{format(d, 'MMM', { locale: fr })}</div>
@@ -245,6 +223,7 @@ export function MeetingsPage() {
               colleagues={colleagues ?? []}
               getColleague={getColleague}
               onDelete={() => setDeleteConfirm(selected.id)}
+              onEdit={() => setEditMeeting(selected)}
               crSearch={crSearch}
               setCrSearch={setCrSearch}
               filteredCR={filteredCR}
@@ -257,62 +236,50 @@ export function MeetingsPage() {
 }
 
 // ─── Detail panel ─────────────────────────────────────────────────────────────
-function DetailPanel({ meeting, colleagues, getColleague, onDelete, crSearch, setCrSearch, filteredCR }: {
+function DetailPanel({ meeting, colleagues, getColleague, onDelete, onEdit, crSearch, setCrSearch, filteredCR }: {
   meeting: MeetingRow; colleagues: any[]; getColleague: (id: string) => any
-  onDelete: () => void; crSearch: string; setCrSearch: (v: string) => void
+  onDelete: () => void; onEdit: () => void
+  crSearch: string; setCrSearch: (v: string) => void
   filteredCR: Record<string, string[]> | null
 }) {
   const d = new Date(meeting.date)
   const participantIds = meeting.colleagues_ids ?? []
+  const [exporting, setExporting] = useState(false)
 
-  // cr_items avec attributions (nouvelle table)
   const { data: crItemsRaw } = useCRItems(meeting.id)
+  const { data: actions } = useActions(meeting.id)
 
-  // Index contenu -> collègue pour affichage badge attribution
   const crAttributionMap = useMemo(() => {
     const map: Record<string, any> = {}
     ;(crItemsRaw ?? []).forEach((item: any) => {
-      if (item.content && item.colleagues) {
-        map[item.content.trim()] = item.colleagues
-      }
+      if (item.content && item.colleagues) map[item.content.trim()] = item.colleagues
     })
     return map
   }, [crItemsRaw])
 
-  // Stats
   const stats = CR_CONF.map(c => ({ ...c, items: parseItems(meeting[c.key]) }))
   const totalPoints = stats.reduce((a, b) => a + b.items.length, 0)
+
+  const handleExport = async () => {
+    setExporting(true)
+    await exportMeetingPDF(meeting, colleagues, crItemsRaw ?? [], actions ?? [])
+    setExporting(false)
+  }
 
   return (
     <div>
       {/* Hero header */}
-      <div style={{
-        padding: '28px 32px 24px',
-        borderBottom: '1px solid rgba(255,255,255,0.05)',
-        position: 'relative',
-        background: 'linear-gradient(180deg, rgba(29,158,117,0.04) 0%, transparent 100%)',
-      }}>
-        {/* Top row */}
+      <div style={{ padding: '28px 32px 24px', borderBottom: '1px solid rgba(255,255,255,0.05)', position: 'relative', background: 'linear-gradient(180deg, rgba(29,158,117,0.04) 0%, transparent 100%)' }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 16, marginBottom: 16 }}>
           {/* Big date block */}
-          <div style={{
-            width: 56, height: 56, flexShrink: 0, background: 'rgba(255,255,255,0.04)',
-            border: '1px solid rgba(255,255,255,0.08)', borderRadius: 12,
-            display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-          }}>
+          <div style={{ width: 56, height: 56, flexShrink: 0, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 12, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
             <span style={{ fontSize: 22, fontWeight: 700, color: '#fff', lineHeight: 1 }}>{format(d, 'd')}</span>
-            <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.35)', textTransform: 'uppercase', letterSpacing: '0.08em', marginTop: 2 }}>
-              {format(d, 'MMM yyyy', { locale: fr })}
-            </span>
+            <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.35)', textTransform: 'uppercase', letterSpacing: '0.08em', marginTop: 2 }}>{format(d, 'MMM yyyy', { locale: fr })}</span>
           </div>
 
           <div style={{ flex: 1, minWidth: 0 }}>
-            <h2 style={{ fontSize: 20, fontWeight: 600, color: '#fff', margin: 0, lineHeight: 1.2, letterSpacing: '-0.02em' }}>
-              {meeting.title}
-            </h2>
-            {meeting.description && (
-              <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.4)', margin: '6px 0 0' }}>{meeting.description}</p>
-            )}
+            <h2 style={{ fontSize: 20, fontWeight: 600, color: '#fff', margin: 0, lineHeight: 1.2, letterSpacing: '-0.02em' }}>{meeting.title}</h2>
+            {meeting.description && <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.4)', margin: '6px 0 0' }}>{meeting.description}</p>}
             <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginTop: 8 }}>
               <span style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: 'rgba(255,255,255,0.3)', fontFamily: 'monospace' }}>
                 <Clock style={{ width: 11, height: 11 }} />
@@ -321,22 +288,38 @@ function DetailPanel({ meeting, colleagues, getColleague, onDelete, crSearch, se
             </div>
           </div>
 
-          <button onClick={onDelete} style={{ padding: 8, background: 'none', border: '1px solid transparent', borderRadius: 8, cursor: 'pointer', color: 'rgba(255,255,255,0.2)', flexShrink: 0, transition: 'all 0.15s' }}
-            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = '#E24B4A'; (e.currentTarget as HTMLElement).style.borderColor = '#E24B4A30'; (e.currentTarget as HTMLElement).style.background = '#E24B4A10' }}
-            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = 'rgba(255,255,255,0.2)'; (e.currentTarget as HTMLElement).style.borderColor = 'transparent'; (e.currentTarget as HTMLElement).style.background = 'none' }}>
-            <Trash2 style={{ width: 14, height: 14 }} />
-          </button>
+          {/* Action buttons */}
+          <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+            {/* Export PDF */}
+            <button onClick={handleExport} disabled={exporting} title="Exporter en PDF"
+              style={{ padding: '7px 12px', background: 'rgba(29,158,117,0.1)', border: '1px solid rgba(29,158,117,0.25)', borderRadius: 8, cursor: exporting ? 'wait' : 'pointer', color: '#5DCAA5', display: 'flex', alignItems: 'center', gap: 5, fontSize: 12, fontWeight: 500, transition: 'all 0.15s', opacity: exporting ? 0.6 : 1 }}
+              onMouseEnter={e => { if (!exporting) { (e.currentTarget as HTMLElement).style.background = 'rgba(29,158,117,0.18)' } }}
+              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(29,158,117,0.1)' }}>
+              <FileDown style={{ width: 13, height: 13 }} />
+              {exporting ? 'Export...' : 'PDF'}
+            </button>
+            {/* Éditer */}
+            <button onClick={onEdit} title="Modifier la réunion"
+              style={{ padding: 8, background: 'rgba(239,159,39,0.08)', border: '1px solid rgba(239,159,39,0.2)', borderRadius: 8, cursor: 'pointer', color: '#FAC775', display: 'flex', transition: 'all 0.15s' }}
+              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(239,159,39,0.16)' }}
+              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(239,159,39,0.08)' }}>
+              <Pencil style={{ width: 13, height: 13 }} />
+            </button>
+            {/* Supprimer */}
+            <button onClick={onDelete} title="Supprimer la réunion"
+              style={{ padding: 8, background: 'none', border: '1px solid transparent', borderRadius: 8, cursor: 'pointer', color: 'rgba(255,255,255,0.2)', display: 'flex', transition: 'all 0.15s' }}
+              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = '#E24B4A'; (e.currentTarget as HTMLElement).style.borderColor = '#E24B4A30'; (e.currentTarget as HTMLElement).style.background = '#E24B4A10' }}
+              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = 'rgba(255,255,255,0.2)'; (e.currentTarget as HTMLElement).style.borderColor = 'transparent'; (e.currentTarget as HTMLElement).style.background = 'none' }}>
+              <Trash2 style={{ width: 14, height: 14 }} />
+            </button>
+          </div>
         </div>
 
         {/* Stats row */}
         {totalPoints > 0 && (
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             {stats.filter(s => s.items.length > 0).map(s => (
-              <div key={s.key} style={{
-                display: 'flex', alignItems: 'center', gap: 5,
-                padding: '4px 10px', borderRadius: 20,
-                background: s.light, border: `1px solid ${s.border}`,
-              }}>
+              <div key={s.key} style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '4px 10px', borderRadius: 20, background: s.light, border: `1px solid ${s.border}` }}>
                 <s.icon style={{ width: 10, height: 10, color: s.color }} />
                 <span style={{ fontSize: 11, color: s.color, fontFamily: 'monospace' }}>{s.items.length} {s.label.toLowerCase()}</span>
               </div>
@@ -354,11 +337,7 @@ function DetailPanel({ meeting, colleagues, getColleague, onDelete, crSearch, se
               const c = getColleague(id)
               if (!c) return null
               return (
-                <div key={id} style={{
-                  display: 'flex', alignItems: 'center', gap: 10,
-                  padding: '8px 14px', borderRadius: 10,
-                  background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)',
-                }}>
+                <div key={id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 14px', borderRadius: 10, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
                   <Avatar name={c.name} size="sm" />
                   <div>
                     <p style={{ fontSize: 12, fontWeight: 500, color: '#fff', margin: 0 }}>{c.name}</p>
@@ -376,49 +355,27 @@ function DetailPanel({ meeting, colleagues, getColleague, onDelete, crSearch, se
         <div style={{ padding: '20px 32px', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
             <SectionTitle icon={FileText} label="Compte-rendu" />
-            {/* CR search */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 8, padding: '4px 10px', height: 28 }}>
               <Search style={{ width: 11, height: 11, color: 'rgba(255,255,255,0.25)', flexShrink: 0 }} />
-              <input
-                value={crSearch} onChange={e => setCrSearch(e.target.value)}
-                placeholder="Filtrer le CR..."
-                style={{ background: 'transparent', border: 'none', fontSize: 11, color: '#fff', outline: 'none', width: 120 }}
-              />
+              <input value={crSearch} onChange={e => setCrSearch(e.target.value)} placeholder="Filtrer le CR..."
+                style={{ background: 'transparent', border: 'none', fontSize: 11, color: '#fff', outline: 'none', width: 120 }} />
               {crSearch && <button onClick={() => setCrSearch('')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'rgba(255,255,255,0.3)', display: 'flex' }}><X style={{ width: 10, height: 10 }} /></button>}
             </div>
           </div>
 
-          {/* 2-column grid for CR */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
             {CR_CONF.map(conf => {
               const rawItems = parseItems(meeting[conf.key])
               const items = filteredCR ? (filteredCR[conf.key] ?? []) : rawItems
               if (rawItems.length === 0) return null
-
               const Icon = conf.icon
               return (
-                <div key={conf.key} style={{
-                  borderRadius: 12, overflow: 'hidden',
-                  border: `1px solid ${conf.border}`,
-                  background: conf.light,
-                }}>
-                  {/* Card header */}
-                  <div style={{
-                    display: 'flex', alignItems: 'center', gap: 6,
-                    padding: '9px 14px',
-                    borderBottom: `1px solid ${conf.border}`,
-                    background: `${conf.color}10`,
-                  }}>
+                <div key={conf.key} style={{ borderRadius: 12, overflow: 'hidden', border: `1px solid ${conf.border}`, background: conf.light }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 14px', borderBottom: `1px solid ${conf.border}`, background: `${conf.color}10` }}>
                     <Icon style={{ width: 11, height: 11, color: conf.color, flexShrink: 0 }} />
-                    <span style={{ fontSize: 10, fontWeight: 600, color: conf.color, fontFamily: 'monospace', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
-                      {conf.label}
-                    </span>
-                    <span style={{ marginLeft: 'auto', fontSize: 10, color: conf.color, opacity: 0.6, fontFamily: 'monospace' }}>
-                      {rawItems.length}
-                    </span>
+                    <span style={{ fontSize: 10, fontWeight: 600, color: conf.color, fontFamily: 'monospace', letterSpacing: '0.08em', textTransform: 'uppercase' }}>{conf.label}</span>
+                    <span style={{ marginLeft: 'auto', fontSize: 10, color: conf.color, opacity: 0.6, fontFamily: 'monospace' }}>{rawItems.length}</span>
                   </div>
-
-                  {/* Items */}
                   <div style={{ padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 6 }}>
                     {items.length === 0 && crSearch ? (
                       <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.2)', fontStyle: 'italic', margin: 0 }}>Aucun résultat</p>
@@ -432,31 +389,23 @@ function DetailPanel({ meeting, colleagues, getColleague, onDelete, crSearch, se
                       ]
                       const ac = attributed ? avatarColors[attributed.name.charCodeAt(0) % avatarColors.length] : null
                       return (
-                      <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', padding: '4px 0', borderBottom: i < items.length - 1 ? '1px solid rgba(255,255,255,0.04)' : 'none' }}>
-                        <div style={{ width: 4, height: 4, borderRadius: '50%', background: conf.color, flexShrink: 0, marginTop: 6, opacity: 0.8 }} />
-                        <p style={{
-                          flex: 1, fontSize: 12, color: 'rgba(255,255,255,0.75)', margin: 0, lineHeight: 1.5,
-                          ...(crSearch && item.toLowerCase().includes(crSearch.toLowerCase()) ? {
-                            background: `${conf.color}25`, borderRadius: 4, padding: '0 3px'
-                          } : {})
-                        }}>
-                          {crSearch && item.toLowerCase().includes(crSearch.toLowerCase())
-                            ? highlightText(item, crSearch, conf.color)
-                            : item
-                          }
-                        </p>
-                        {attributed && ac && (
-                          <div title={`Attribué à ${attributed.name}`}
-                            style={{ display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0, padding: '1px 7px', borderRadius: 20, background: ac.bg, border: `1px solid ${ac.color}30` }}>
-                            <div style={{ width: 14, height: 14, borderRadius: '50%', background: ac.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 7, fontWeight: 700, color: ac.color, flexShrink: 0 }}>
-                              {initials}
+                        <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', padding: '4px 0', borderBottom: i < items.length - 1 ? '1px solid rgba(255,255,255,0.04)' : 'none' }}>
+                          <div style={{ width: 4, height: 4, borderRadius: '50%', background: conf.color, flexShrink: 0, marginTop: 6, opacity: 0.8 }} />
+                          <p style={{ flex: 1, fontSize: 12, color: 'rgba(255,255,255,0.75)', margin: 0, lineHeight: 1.5, ...(crSearch && item.toLowerCase().includes(crSearch.toLowerCase()) ? { background: `${conf.color}25`, borderRadius: 4, padding: '0 3px' } : {}) }}>
+                            {crSearch && item.toLowerCase().includes(crSearch.toLowerCase()) ? highlightText(item, crSearch, conf.color) : item}
+                          </p>
+                          {attributed && ac && (
+                            <div title={`Attribué à ${attributed.name}`}
+                              style={{ display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0, padding: '1px 7px', borderRadius: 20, background: ac.bg, border: `1px solid ${ac.color}30` }}>
+                              <div style={{ width: 14, height: 14, borderRadius: '50%', background: ac.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 7, fontWeight: 700, color: ac.color, flexShrink: 0 }}>
+                                {initials}
+                              </div>
+                              <span style={{ fontSize: 10, color: ac.color, fontFamily: 'monospace', fontWeight: 600, whiteSpace: 'nowrap' }}>
+                                {attributed.name.split(' ')[0]}
+                              </span>
                             </div>
-                            <span style={{ fontSize: 10, color: ac.color, fontFamily: 'monospace', fontWeight: 600, whiteSpace: 'nowrap' }}>
-                              {attributed.name.split(' ')[0]}
-                            </span>
-                          </div>
-                        )}
-                      </div>
+                          )}
+                        </div>
                       )
                     })}
                   </div>
@@ -475,27 +424,17 @@ function DetailPanel({ meeting, colleagues, getColleague, onDelete, crSearch, se
   )
 }
 
-// ─── Highlight matching text ──────────────────────────────────────────────────
 function highlightText(text: string, query: string, color: string): React.ReactNode {
   const idx = text.toLowerCase().indexOf(query.toLowerCase())
   if (idx === -1) return text
   return (
-    <>
-      {text.slice(0, idx)}
-      <mark style={{ background: color + '40', color: '#fff', borderRadius: 2, padding: '0 1px' }}>
-        {text.slice(idx, idx + query.length)}
-      </mark>
-      {text.slice(idx + query.length)}
-    </>
+    <>{text.slice(0, idx)}<mark style={{ background: color + '40', color: '#fff', borderRadius: 2, padding: '0 1px' }}>{text.slice(idx, idx + query.length)}</mark>{text.slice(idx + query.length)}</>
   )
 }
 
-// ─── Tiny components ──────────────────────────────────────────────────────────
 function Pill({ color, children }: { color: string; children: React.ReactNode }) {
   return (
-    <span style={{ fontSize: 9, color, background: color + '15', border: `1px solid ${color}25`, borderRadius: 20, padding: '2px 7px', fontFamily: 'monospace' }}>
-      {children}
-    </span>
+    <span style={{ fontSize: 9, color, background: color + '15', border: `1px solid ${color}25`, borderRadius: 20, padding: '2px 7px', fontFamily: 'monospace' }}>{children}</span>
   )
 }
 
@@ -508,15 +447,12 @@ function SectionTitle({ icon: Icon, label }: { icon: React.ElementType; label: s
   )
 }
 
-// ─── Actions panel ────────────────────────────────────────────────────────────
 function MeetingActionsPanel({ meetingId }: { meetingId: string }) {
   const { data: actions, isLoading } = useActions(meetingId)
   const { data: colleagues } = useColleagues()
   const createAction = useCreateAction()
   const [showAdd, setShowAdd] = useState(false)
   const [desc, setDesc] = useState(''); const [assignTo, setAssignTo] = useState(''); const [dueDate, setDueDate] = useState('')
-
-  const [showAdd2] = [showAdd]
 
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault(); if (!desc.trim()) return
@@ -556,7 +492,7 @@ function MeetingActionsPanel({ meetingId }: { meetingId: string }) {
         </form>
       )}
 
-      {(actions?.length ?? 0) === 0 && !showAdd2 && (
+      {(actions?.length ?? 0) === 0 && !showAdd && (
         <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.15)', textAlign: 'center', padding: '16px 0' }}>Aucune action liée à cette réunion</p>
       )}
 
@@ -568,12 +504,7 @@ function MeetingActionsPanel({ meetingId }: { meetingId: string }) {
             const done = a.status === 'completed'
             const st = ACTION_STATUS[a.status]
             return (
-              <div key={a.id} style={{
-                display: 'flex', alignItems: 'center', gap: 12,
-                padding: '10px 14px',
-                borderBottom: i < actions!.length - 1 ? '1px solid rgba(255,255,255,0.04)' : 'none',
-                background: 'rgba(255,255,255,0.01)',
-              }}>
+              <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', borderBottom: i < actions!.length - 1 ? '1px solid rgba(255,255,255,0.04)' : 'none', background: 'rgba(255,255,255,0.01)' }}>
                 <div style={{ width: 6, height: 6, borderRadius: '50%', flexShrink: 0, background: done ? '#1D9E75' : late ? '#E24B4A' : '#EF9F27' }} />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <p style={{ fontSize: 13, color: done ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.8)', margin: 0, textDecoration: done ? 'line-through' : 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.description}</p>
@@ -582,9 +513,7 @@ function MeetingActionsPanel({ meetingId }: { meetingId: string }) {
                     {a.due_date && <span style={{ fontSize: 10, color: late ? '#E24B4A' : 'rgba(255,255,255,0.25)', fontFamily: 'monospace' }}>{fDate(a.due_date)}</span>}
                   </div>
                 </div>
-                <span style={{ fontSize: 10, color: st?.color === 'teal' ? '#1D9E75' : st?.color === 'red' ? '#E24B4A' : st?.color === 'amber' ? '#EF9F27' : 'rgba(255,255,255,0.3)', background: 'rgba(255,255,255,0.05)', borderRadius: 20, padding: '2px 8px', fontFamily: 'monospace', flexShrink: 0 }}>
-                  {st?.label}
-                </span>
+                <span style={{ fontSize: 10, color: st?.color === 'teal' ? '#1D9E75' : st?.color === 'red' ? '#E24B4A' : st?.color === 'amber' ? '#EF9F27' : 'rgba(255,255,255,0.3)', background: 'rgba(255,255,255,0.05)', borderRadius: 20, padding: '2px 8px', fontFamily: 'monospace', flexShrink: 0 }}>{st?.label}</span>
               </div>
             )
           })}
