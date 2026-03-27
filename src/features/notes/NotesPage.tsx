@@ -593,7 +593,7 @@ function NoteCard({ note, meetings, isSelected, onClick, search }: {
           )}
           <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', alignItems: 'center' }}>
             <span style={{ fontSize: 9.5, color: 'rgba(255,255,255,0.18)', fontFamily: "'IBM Plex Mono', monospace" }}>{fRelative(note.created_at)}</span>
-            {linked && <span style={{ fontSize: 9, color: '#378ADD', background: '#378ADD10', borderRadius: 3, padding: '1px 5px', fontFamily: "'IBM Plex Mono', monospace' }}>📅 {linked.title?.slice(0, 18)}</span>}
+            {linked && <span style={{ fontSize: 9, color: '#378ADD', background: '#378ADD10', borderRadius: 3, padding: '1px 5px', fontFamily: "'IBM Plex Mono', monospace" }}>📅 {linked.title?.slice(0, 18)}</span>}
             {total > 0 && <span style={{ fontSize: 9, color: checked === total ? '#1D9E75' : '#EF9F27', fontFamily: "'IBM Plex Mono', monospace" }}>☑ {checked}/{total}</span>}
             {(note.tags ?? []).slice(0, 2).map((t: string) => {
               const p = TAG_PRESETS.find(x => x.label === t)
