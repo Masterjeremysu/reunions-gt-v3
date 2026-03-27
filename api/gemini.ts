@@ -19,7 +19,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     );
 
     const data = await response.json();
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+    let text = data.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+
+    // Nettoie les balises markdown que Gemini ajoute parfois autour du JSON
+    text = text.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
+
     res.status(200).json({ text });
   } catch (err) {
     res.status(500).json({ error: 'Proxy Gemini error', detail: String(err) });
