@@ -49,21 +49,17 @@ const GLOBAL_STYLES = `
   .action-btn:hover { background: rgba(255,255,255,0.07) !important; color: #fff !important }
 `
 
-// ─── Anthropic API helper ──────────────────────────────────────────────────────
+
+// ─── Google Gemini API helper ─────────────────────────────────────────────────
 async function callClaude(systemPrompt: string, userPrompt: string): Promise<string> {
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
+  const response = await fetch('/api/gemini', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 1000,
-      system: systemPrompt,
-      messages: [{ role: 'user', content: userPrompt }],
-    }),
+    body: JSON.stringify({ systemPrompt, userPrompt }),
   })
-  if (!response.ok) throw new Error('Erreur API Claude')
+  if (!response.ok) throw new Error('Erreur API Gemini')
   const data = await response.json()
-  return data.content?.[0]?.text ?? ''
+  return data.text ?? ''
 }
 
 // ─── AI actions ────────────────────────────────────────────────────────────────
