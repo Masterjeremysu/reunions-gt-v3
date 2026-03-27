@@ -5,9 +5,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const { systemPrompt, userPrompt } = req.body;
 
+  // Vérifie que la clé est bien chargée
+  if (!process.env.GEMINI_API_KEY) {
+    return res.status(500).json({ error: 'GEMINI_API_KEY manquante' });
+  }
+
   try {
     const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -19,9 +24,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     );
 
     const data = await response.json();
-    let text = data.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
 
-    // Nettoie les balises markdown que Gemini ajoute parfois autour du JSON
+    // Log complet pour debug
+    console.log('Gemini status:', response.status);
+    console.log('Gemini response:', JSON.stringify(data));
+
+    if (!response.ok) {
+      return res.status(500).json({ error: 'Gemini API error', detail: data });
+    }
+
+    let text = data.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
     text = text.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
 
     res.status(200).json({ text });
