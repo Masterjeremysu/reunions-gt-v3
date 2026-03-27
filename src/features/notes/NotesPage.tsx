@@ -49,8 +49,7 @@ const GLOBAL_STYLES = `
   .action-btn:hover { background: rgba(255,255,255,0.07) !important; color: #fff !important }
 `
 
-
-// ─── Google Gemini API helper ─────────────────────────────────────────────────
+// ─── Gemini API helper (via proxy Vercel) ──────────────────────────────────────
 async function callClaude(systemPrompt: string, userPrompt: string): Promise<string> {
   const response = await fetch('/api/gemini', {
     method: 'POST',
@@ -89,14 +88,14 @@ async function runAIAction(action: AIAction, content: string, title: string): Pr
   if (action === 'autotag') {
     const available = TAG_PRESETS.map(t => t.label).join(', ')
     return callClaude(
-      `Tu es un assistant de classification. Réponds en JSON uniquement, sans markdown. Format: {"tags": ["tag1", "tag2"]}`,
-      `Depuis ces tags disponibles: ${available}\n\nSélectionne les tags pertinents (0-3 max) pour cette note. JSON uniquement.\n\n${noteCtx}`
+      `Tu es un assistant de classification. Réponds en JSON uniquement, sans markdown, sans backticks, sans explication. Format exact: {"tags": ["tag1", "tag2"]}`,
+      `Depuis ces tags disponibles: ${available}\n\nSélectionne les tags pertinents (0-3 max) pour cette note. Réponds UNIQUEMENT avec le JSON, rien d'autre.\n\n${noteCtx}`
     )
   }
   if (action === 'title') {
     return callClaude(
-      'Tu es un assistant de rédaction. Réponds en français. Donne UNIQUEMENT le titre, sans ponctuation finale.',
-      `Génère un titre court (5-7 mots max) et percutant pour cette note de réunion.\n\n${noteCtx}`
+      'Tu es un assistant de rédaction. Réponds en français. Donne UNIQUEMENT le titre, sans ponctuation finale, sans guillemets, sans explication.',
+      `Génère un titre court (5-7 mots max) et percutant pour cette note de réunion. UNIQUEMENT le titre.\n\n${noteCtx}`
     )
   }
   if (action === 'complete') {
@@ -162,11 +161,17 @@ function AIPanel({ title, content, onInsert, onReplaceContent, onSetTitle, onAdd
   const [loading, setLoading] = useState<AIAction | null>(null)
   const [result, setResult] = useState<{ action: AIAction; text: string } | null>(null)
 
+  // FIX 1 : le résultat s'affiche toujours avant d'appliquer
   const run = async (action: AIAction) => {
     setLoading(action)
     setResult(null)
     try {
       const text = await runAIAction(action, content, title)
+      if (!text || text.trim() === '') {
+        toast.error('Réponse vide — essaie avec plus de contenu dans la note')
+        return
+      }
+      // On stocke toujours le résultat pour affichage, même pour title/autotag
       setResult({ action, text })
     } catch (e: any) {
       toast.error('Erreur IA : ' + e.message)
@@ -175,23 +180,42 @@ function AIPanel({ title, content, onInsert, onReplaceContent, onSetTitle, onAdd
     }
   }
 
+  // FIX 2 : applyResult corrigé pour chaque action
   const applyResult = () => {
     if (!result) return
+
     if (result.action === 'autotag') {
+      // FIX 3 : nettoyage JSON robuste avant parse
       try {
-        const parsed = JSON.parse(result.text)
-        if (parsed.tags) {
+        const cleaned = result.text
+          .replace(/```json\s*/gi, '')
+          .replace(/```\s*/g, '')
+          .trim()
+        const parsed = JSON.parse(cleaned)
+        if (parsed.tags && Array.isArray(parsed.tags)) {
           onAddTags(parsed.tags)
-          toast.success(`${parsed.tags.length} tags ajoutés`)
+          toast.success(`${parsed.tags.length} tag(s) ajouté(s)`)
+        } else {
+          toast.error('Format de tags inattendu')
         }
-      } catch { toast.error('Impossible de parser les tags') }
-    } else if (result.action === 'improve' || result.action === 'actions') {
+      } catch {
+        toast.error('Impossible de parser les tags')
+      }
+    } else if (result.action === 'improve') {
+      // Améliorer = remplace le contenu
       onReplaceContent(result.text)
-      toast.success('Contenu remplacé')
+      toast.success('Contenu amélioré')
+    } else if (result.action === 'actions') {
+      // FIX 4 : Extraire actions = insère EN DESSOUS, ne remplace pas
+      onInsert('\n\n---\n📋 Actions extraites :\n' + result.text)
+      toast.success('Actions insérées dans la note')
     } else if (result.action === 'title') {
-      onSetTitle(result.text)
+      // FIX : titre = applique proprement sans guillemets parasites
+      const cleanTitle = result.text.replace(/^["«\s]+|["»\s]+$/g, '').trim()
+      onSetTitle(cleanTitle)
       toast.success('Titre mis à jour')
     } else {
+      // summarize, complete = insère en dessous
       onInsert('\n\n---\n' + result.text)
       toast.success('Inséré dans la note')
     }
@@ -206,6 +230,22 @@ function AIPanel({ title, content, onInsert, onReplaceContent, onSetTitle, onAdd
     { id: 'title' as AIAction, label: 'Titre IA', icon: Lightbulb, desc: 'Générer un titre' },
     { id: 'complete' as AIAction, label: 'Continuer', icon: ArrowRight, desc: 'Complétion du texte' },
   ]
+
+  // Aperçu lisible selon le type d'action
+  const getResultPreview = () => {
+    if (!result) return ''
+    if (result.action === 'autotag') {
+      try {
+        const cleaned = result.text.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim()
+        const p = JSON.parse(cleaned)
+        return (p.tags ?? []).join(', ') || 'Aucun tag suggéré'
+      } catch { return result.text }
+    }
+    if (result.action === 'title') {
+      return result.text.replace(/^["«\s]+|["»\s]+$/g, '').trim()
+    }
+    return result.text.slice(0, 220) + (result.text.length > 220 ? '…' : '')
+  }
 
   return (
     <div style={{
@@ -253,18 +293,18 @@ function AIPanel({ title, content, onInsert, onReplaceContent, onSetTitle, onAdd
         ))}
       </div>
 
-      {/* Result */}
+      {/* Result — s'affiche toujours avant d'appliquer */}
       {result && (
         <div style={{
           margin: '0 10px 10px', padding: 12,
           background: 'rgba(127,119,221,0.08)', border: '1px solid rgba(127,119,221,0.2)',
           borderRadius: 10, animation: 'fadeIn 0.2s ease',
         }}>
+          <div style={{ fontSize: 10, color: '#7F77DD', fontFamily: "'IBM Plex Mono', monospace", marginBottom: 6, fontWeight: 600 }}>
+            {AI_ACTIONS.find(a => a.id === result.action)?.label} · aperçu
+          </div>
           <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.6)', lineHeight: 1.6, marginBottom: 10, whiteSpace: 'pre-wrap', fontFamily: "'IBM Plex Mono', monospace" }}>
-            {result.action === 'autotag'
-              ? (() => { try { const p = JSON.parse(result.text); return (p.tags ?? []).join(', ') || 'Aucun tag' } catch { return result.text } })()
-              : result.text.slice(0, 200) + (result.text.length > 200 ? '…' : '')
-            }
+            {getResultPreview()}
           </div>
           <div style={{ display: 'flex', gap: 6 }}>
             <button onClick={applyResult} style={{
@@ -272,7 +312,7 @@ function AIPanel({ title, content, onInsert, onReplaceContent, onSetTitle, onAdd
               color: '#fff', background: '#7F77DD', border: 'none',
               borderRadius: 6, cursor: 'pointer',
             }}>
-              Appliquer
+              ✓ Appliquer
             </button>
             <button onClick={() => setResult(null)} style={{
               padding: '6px 8px', fontSize: 10, color: 'rgba(255,255,255,0.3)',
@@ -800,7 +840,6 @@ export function NotesPage() {
     await updateNote.mutateAsync({ id: selected.id, is_archived: !selected.is_archived })
   }
 
-  // Toggle checkbox in viewer (without opening editor)
   const handleToggleCheckbox = async (lineIndex: number) => {
     if (!selected || !selected.content) return
     const lines = selected.content.split('\n')
@@ -811,7 +850,6 @@ export function NotesPage() {
     await updateNote.mutateAsync({ id: selected.id, content: lines.join('\n') })
   }
 
-  // Kanban: group by tags
   const kanbanColumns = useMemo(() => {
     if (!notes) return []
     const tagGroups: Record<string, any[]> = { 'Sans tag': [] }
@@ -875,7 +913,6 @@ export function NotesPage() {
         </div>
 
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center' }}>
-          {/* View toggle */}
           <div style={{ display: 'flex', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 7, overflow: 'hidden' }}>
             {([['list', List], ['kanban', LayoutGrid]] as const).map(([v, Icon]) => (
               <button key={v} onClick={() => setView(v)}
@@ -903,7 +940,6 @@ export function NotesPage() {
       <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
         {/* Left panel */}
         <div style={{ width: 270, flexShrink: 0, borderRight: '1px solid rgba(255,255,255,0.05)', display: 'flex', flexDirection: 'column', background: '#0b0d15' }}>
-          {/* Search */}
           <div style={{ padding: '10px 10px 6px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 8, padding: '0 10px', height: 32 }}>
               <Search style={{ width: 11, height: 11, color: 'rgba(255,255,255,0.22)', flexShrink: 0 }} />
@@ -913,7 +949,6 @@ export function NotesPage() {
             </div>
           </div>
 
-          {/* Tag filters */}
           {allTags.length > 0 && (
             <div style={{ padding: '0 10px 8px', display: 'flex', gap: 4, flexWrap: 'wrap' }}>
               <button onClick={() => setFilterTag(null)}
@@ -933,7 +968,6 @@ export function NotesPage() {
             </div>
           )}
 
-          {/* Note list */}
           <div style={{ flex: 1, overflowY: 'auto' }}>
             {isLoading && <div style={{ display: 'flex', justifyContent: 'center', padding: 40 }}><Spinner /></div>}
             {!isLoading && filtered.length === 0 && (
@@ -978,7 +1012,6 @@ export function NotesPage() {
               </button>
             </div>
           ) : view === 'kanban' ? (
-            // Kanban view
             <div style={{ flex: 1, overflowX: 'auto', overflowY: 'hidden', display: 'flex', gap: 0, padding: '20px', height: '100%' }}>
               {kanbanColumns.map(col => (
                 <div key={col.label} style={{ width: 240, flexShrink: 0, marginRight: 14, display: 'flex', flexDirection: 'column', height: '100%' }}>
@@ -994,7 +1027,7 @@ export function NotesPage() {
                       <button key={n.id}
                         onClick={() => { setView('list'); setSelectedId(n.id); setCreating(false); setEditing(false) }}
                         style={{
-                          background: 'rgba(255,255,255,0.03)', border: `1px solid rgba(255,255,255,0.07)`,
+                          background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)',
                           borderRadius: 10, padding: '12px 14px', cursor: 'pointer',
                           textAlign: 'left', transition: 'all 0.13s', display: 'block', width: '100%',
                         }}
