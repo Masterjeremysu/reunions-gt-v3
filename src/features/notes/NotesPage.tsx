@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useCallback, useEffect } from 'react'
+import { useState, useMemo, useRef, useEffect, useCallback } from 'react'
 import { useNotes, useCreateNote, useUpdateNote, useDeleteNote } from './useNotes'
 import { useMeetings } from '../meetings/useMeetings'
 import { Spinner } from '../../components/ui'
@@ -6,13 +6,11 @@ import { fDate, fRelative } from '../../utils'
 import {
   FileText, Plus, Search, X, Archive, Trash2,
   CalendarDays, Edit3, Loader2, Clock, BookOpen,
-  Sparkles, CheckSquare, Hash, Eye, Filter, MoreHorizontal,
-  Wand2, ListChecks, Tags, AlignLeft, Keyboard,
-  LayoutGrid, List, ChevronDown, Send, StopCircle,
-  Lightbulb, ArrowRight, Zap,
+  CheckSquare, Eye, LayoutGrid, List,
+  Bold, Italic, Hash, Minus, AlignLeft,
+  ChevronRight, Copy,
 } from 'lucide-react'
-import { format, isAfter, isBefore, addDays } from 'date-fns'
-import { fr } from 'date-fns/locale'
+import { isAfter, isBefore, addDays } from 'date-fns'
 import { supabase } from '../../lib/supabase'
 import { toast } from 'sonner'
 
@@ -26,113 +24,59 @@ const TAG_PRESETS = [
   { label: 'Technique', color: '#1D9E75' },
 ]
 
+const TEMPLATES = [
+  {
+    label: '📋 Réunion',
+    content: `# Ordre du jour\n\n## Participants\n☐ \n\n## Points à aborder\n☐ \n☐ \n☐ \n\n## Décisions prises\n\n## Actions\n☐ \n☐ \n\n## Prochaine réunion\n`,
+  },
+  {
+    label: '📝 Compte-rendu',
+    content: `# Compte-rendu\n\n**Date :** \n**Présents :** \n\n## Résumé\n\n## Décisions\n\n## Actions à suivre\n☐ \n☐ \n`,
+  },
+  {
+    label: '💡 Idée',
+    content: `# Idée\n\n## Description\n\n## Bénéfices\n\n## Prochaines étapes\n☐ \n☐ \n`,
+  },
+  {
+    label: '👤 Suivi client',
+    content: `# Suivi client\n\n**Client :** \n**Contact :** \n\n## Contexte\n\n## Actions en cours\n☐ \n☐ \n\n## Notes\n`,
+  },
+]
+
+const SLASH_ITEMS = [
+  { label: 'Titre 1',       icon: '#',  insert: '# ',    desc: 'Grand titre' },
+  { label: 'Titre 2',       icon: '##', insert: '## ',   desc: 'Sous-titre' },
+  { label: 'Case à cocher', icon: '☐',  insert: '☐ ',   desc: 'Todo item' },
+  { label: 'Liste',         icon: '▸',  insert: '- ',    desc: 'Élément de liste' },
+  { label: 'Citation',      icon: '❝',  insert: '> ',    desc: 'Bloc citation' },
+  { label: 'Séparateur',    icon: '—',  insert: '---\n', desc: 'Ligne de séparation', offset: 0 },
+  { label: 'Gras',          icon: 'B',  insert: '****',  desc: 'Texte en gras', offset: 2 },
+]
+
 const GLOBAL_STYLES = `
   @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&family=Syne:wght@600;700;800&display=swap');
   @keyframes spin { to { transform: rotate(360deg) } }
   @keyframes fadeIn { from { opacity: 0; transform: translateY(4px) } to { opacity: 1; transform: none } }
   @keyframes slideIn { from { opacity: 0; transform: translateX(8px) } to { opacity: 1; transform: none } }
-  @keyframes pulse { 0%, 100% { opacity: 1 } 50% { opacity: 0.4 } }
-  @keyframes shimmer {
-    0% { background-position: -200% 0 }
-    100% { background-position: 200% 0 }
-  }
   * { box-sizing: border-box }
   ::-webkit-scrollbar { width: 4px; height: 4px }
   ::-webkit-scrollbar-track { background: transparent }
   ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 4px }
   ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.15) }
-  .note-textarea::placeholder { color: rgba(255,255,255,0.18); font-style: italic }
+  .note-textarea { caret-color: #1D9E75; }
+  .note-textarea::placeholder { color: rgba(255,255,255,0.15); font-style: italic }
   .note-card-btn:focus-visible { outline: 2px solid #1D9E75; outline-offset: -2px }
-  .ai-thinking { animation: pulse 1.4s ease-in-out infinite }
   .tag-pill-hover:hover { opacity: 1 !important }
   .action-btn { transition: all 0.13s ease }
   .action-btn:hover { background: rgba(255,255,255,0.07) !important; color: #fff !important }
+  .toolbar-btn { transition: all 0.1s; padding: 5px 7px; border-radius: 5px; border: none; background: transparent; cursor: pointer; color: rgba(255,255,255,0.4); display: flex; align-items: center; justify-content: center; }
+  .toolbar-btn:hover { background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.9); }
+  .toolbar-btn.active { background: rgba(29,158,117,0.15); color: #1D9E75; }
+  .slash-menu { animation: fadeIn 0.15s ease; }
+  .slash-item:hover { background: rgba(255,255,255,0.05) !important; }
 `
 
-// ─── Gemini API helper (via proxy Vercel) ──────────────────────────────────────
-async function callClaude(systemPrompt: string, userPrompt: string): Promise<string> {
-  const response = await fetch('/api/gemini', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ systemPrompt, userPrompt }),
-  })
-  if (!response.ok) throw new Error('Erreur API Gemini')
-  const data = await response.json()
-  return data.text ?? ''
-}
-
-// ─── AI actions ────────────────────────────────────────────────────────────────
-type AIAction = 'summarize' | 'actions' | 'improve' | 'autotag' | 'title' | 'complete'
-
-async function runAIAction(action: AIAction, content: string, title: string): Promise<string> {
-  const noteCtx = `Titre: "${title}"\n\nContenu:\n${content || '(vide)'}`
-
-  if (action === 'summarize') {
-    return callClaude(
-      'Tu es un assistant de réunion. Réponds en français. Sois concis (3 phrases max).',
-      `Résume cette note de préparation de réunion en 2-3 phrases clés:\n\n${noteCtx}`
-    )
-  }
-  if (action === 'actions') {
-    return callClaude(
-      'Tu es un assistant de réunion. Réponds en français. Extrais uniquement les actions concrètes.',
-      `Extrais les actions à faire depuis cette note. Format: une action par ligne, commence chaque ligne par "☐ ". Si aucune action, réponds "Aucune action détectée."\n\n${noteCtx}`
-    )
-  }
-  if (action === 'improve') {
-    return callClaude(
-      'Tu es un assistant de rédaction. Réponds en français. Améliore le texte en gardant le même format (markdown simple, ☐ pour les cases).',
-      `Améliore la clarté et la concision de cette note de réunion. Conserve toute l'information. Réponds UNIQUEMENT avec le contenu amélioré, sans explication.\n\n${noteCtx}`
-    )
-  }
-  if (action === 'autotag') {
-    const available = TAG_PRESETS.map(t => t.label).join(', ')
-    return callClaude(
-      `Tu es un assistant de classification. Réponds en JSON uniquement, sans markdown, sans backticks, sans explication. Format exact: {"tags": ["tag1", "tag2"]}`,
-      `Depuis ces tags disponibles: ${available}\n\nSélectionne les tags pertinents (0-3 max) pour cette note. Réponds UNIQUEMENT avec le JSON, rien d'autre.\n\n${noteCtx}`
-    )
-  }
-  if (action === 'title') {
-    return callClaude(
-      'Tu es un assistant de rédaction. Réponds en français. Donne UNIQUEMENT le titre, sans ponctuation finale, sans guillemets, sans explication.',
-      `Génère un titre court (5-7 mots max) et percutant pour cette note de réunion. UNIQUEMENT le titre.\n\n${noteCtx}`
-    )
-  }
-  if (action === 'complete') {
-    return callClaude(
-      'Tu es un assistant de rédaction. Continue le texte naturellement en français. Réponds uniquement avec la continuation (pas le début).',
-      `Continue naturellement ce texte de note de réunion (2-3 phrases max):\n\n${content}`
-    )
-  }
-  return ''
-}
-
-// ─── Sub-components ───────────────────────────────────────────────────────────
-function TagPill({ label, color, onRemove, small }: {
-  label: string; color: string; onRemove?: () => void; small?: boolean
-}) {
-  return (
-    <span className="tag-pill-hover" style={{
-      display: 'inline-flex', alignItems: 'center', gap: 4,
-      padding: small ? '1px 6px' : '2px 8px',
-      background: `${color}15`, border: `1px solid ${color}35`,
-      borderRadius: 4, fontSize: small ? 9 : 10,
-      color, fontFamily: "'IBM Plex Mono', monospace", fontWeight: 500,
-      opacity: small ? 0.85 : 1,
-    }}>
-      {label}
-      {onRemove && (
-        <button type="button" onClick={onRemove} style={{
-          background: 'none', border: 'none', cursor: 'pointer',
-          color, display: 'flex', padding: 0, opacity: 0.6,
-        }}>
-          <X style={{ width: 8, height: 8 }} />
-        </button>
-      )}
-    </span>
-  )
-}
-
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 function wordCount(s: string) { return s.trim() ? s.trim().split(/\s+/).length : 0 }
 
 function Highlight({ text, query }: { text: string; query: string }) {
@@ -149,188 +93,132 @@ function Highlight({ text, query }: { text: string; query: string }) {
   )
 }
 
-// ─── AI Panel ─────────────────────────────────────────────────────────────────
-function AIPanel({ title, content, onInsert, onReplaceContent, onSetTitle, onAddTags }: {
-  title: string
-  content: string
-  onInsert: (text: string) => void
-  onReplaceContent: (text: string) => void
-  onSetTitle: (t: string) => void
-  onAddTags: (tags: string[]) => void
+function TagPill({ label, color, onRemove, small }: {
+  label: string; color: string; onRemove?: () => void; small?: boolean
 }) {
-  const [loading, setLoading] = useState<AIAction | null>(null)
-  const [result, setResult] = useState<{ action: AIAction; text: string } | null>(null)
+  return (
+    <span className="tag-pill-hover" style={{
+      display: 'inline-flex', alignItems: 'center', gap: 4,
+      padding: small ? '1px 6px' : '2px 8px',
+      background: `${color}15`, border: `1px solid ${color}35`,
+      borderRadius: 4, fontSize: small ? 9 : 10,
+      color, fontFamily: "'IBM Plex Mono', monospace", fontWeight: 500,
+      opacity: small ? 0.85 : 1,
+    }}>
+      {label}
+      {onRemove && (
+        <button type="button" onClick={onRemove} style={{ background: 'none', border: 'none', cursor: 'pointer', color, display: 'flex', padding: 0, opacity: 0.6 }}>
+          <X style={{ width: 8, height: 8 }} />
+        </button>
+      )}
+    </span>
+  )
+}
 
-  // FIX 1 : le résultat s'affiche toujours avant d'appliquer
-  const run = async (action: AIAction) => {
-    setLoading(action)
-    setResult(null)
-    try {
-      const text = await runAIAction(action, content, title)
-      if (!text || text.trim() === '') {
-        toast.error('Réponse vide — essaie avec plus de contenu dans la note')
-        return
-      }
-      // On stocke toujours le résultat pour affichage, même pour title/autotag
-      setResult({ action, text })
-    } catch (e: any) {
-      toast.error('Erreur IA : ' + e.message)
-    } finally {
-      setLoading(null)
+// ─── Markdown Renderer ────────────────────────────────────────────────────────
+function renderMarkdown(content: string, onToggle?: (i: number) => void) {
+  if (!content) return null
+  return content.split('\n').map((line, i) => {
+    if (line.startsWith('☐ ') || line.startsWith('☑ ')) {
+      const checked = line.startsWith('☑')
+      return (
+        <div key={i} onClick={() => onToggle?.(i)}
+          style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 4, cursor: onToggle ? 'pointer' : 'default', padding: '3px 6px', borderRadius: 6, transition: 'background 0.1s' }}
+          onMouseEnter={e => onToggle && ((e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.03)')}
+          onMouseLeave={e => ((e.currentTarget as HTMLElement).style.background = 'transparent')}>
+          <span style={{ fontSize: 15, color: checked ? '#1D9E75' : 'rgba(255,255,255,0.3)', flexShrink: 0, marginTop: 2, userSelect: 'none' }}>{checked ? '☑' : '☐'}</span>
+          <span style={{ fontSize: 13.5, color: checked ? 'rgba(255,255,255,0.28)' : 'rgba(255,255,255,0.75)', textDecoration: checked ? 'line-through' : 'none', lineHeight: 1.65, fontFamily: "'IBM Plex Mono', monospace", userSelect: 'none' }}>
+            {line.slice(2)}
+          </span>
+        </div>
+      )
     }
-  }
+    if (line.startsWith('# ')) return <h2 key={i} style={{ fontSize: 18, fontWeight: 800, color: '#fff', margin: '18px 0 6px', fontFamily: "'Syne', sans-serif", letterSpacing: '-0.02em' }}>{line.slice(2)}</h2>
+    if (line.startsWith('## ')) return <h3 key={i} style={{ fontSize: 14, fontWeight: 700, color: 'rgba(255,255,255,0.8)', margin: '14px 0 4px', fontFamily: "'Syne', sans-serif" }}>{line.slice(3)}</h3>
+    if (line.startsWith('### ')) return <h4 key={i} style={{ fontSize: 12, fontWeight: 600, color: 'rgba(255,255,255,0.55)', margin: '10px 0 3px', fontFamily: "'Syne', sans-serif", textTransform: 'uppercase', letterSpacing: '0.06em' }}>{line.slice(4)}</h4>
+    if (line.startsWith('---')) return <hr key={i} style={{ border: 'none', borderTop: '1px solid rgba(255,255,255,0.07)', margin: '14px 0' }} />
+    if (line.startsWith('> ')) return (
+      <div key={i} style={{ borderLeft: '3px solid #378ADD', paddingLeft: 12, margin: '6px 0', color: 'rgba(255,255,255,0.5)', fontStyle: 'italic', fontFamily: "'IBM Plex Mono', monospace", fontSize: 13 }}>
+        {line.slice(2)}
+      </div>
+    )
+    if (line.startsWith('- ') || line.startsWith('* ')) return (
+      <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 3, paddingLeft: 4 }}>
+        <span style={{ color: '#1D9E75', fontSize: 12, marginTop: 4, flexShrink: 0 }}>▸</span>
+        <span style={{ fontSize: 13.5, color: 'rgba(255,255,255,0.7)', lineHeight: 1.65, fontFamily: "'IBM Plex Mono', monospace" }}>{line.slice(2)}</span>
+      </div>
+    )
+    if (line === '') return <div key={i} style={{ height: 8 }} />
+    const boldParts = line.split(/(\*\*[^*]+\*\*)/)
+    const rendered = boldParts.map((part, j) =>
+      part.startsWith('**') && part.endsWith('**')
+        ? <strong key={j} style={{ color: '#fff', fontWeight: 700 }}>{part.slice(2, -2)}</strong>
+        : part
+    )
+    return <p key={i} style={{ fontSize: 13.5, color: 'rgba(255,255,255,0.68)', margin: '0 0 4px', lineHeight: 1.75, fontFamily: "'IBM Plex Mono', monospace" }}>{rendered}</p>
+  })
+}
 
-  // FIX 2 : applyResult corrigé pour chaque action
-  const applyResult = () => {
-    if (!result) return
-
-    if (result.action === 'autotag') {
-      // FIX 3 : nettoyage JSON robuste avant parse
-      try {
-        const cleaned = result.text
-          .replace(/```json\s*/gi, '')
-          .replace(/```\s*/g, '')
-          .trim()
-        const parsed = JSON.parse(cleaned)
-        if (parsed.tags && Array.isArray(parsed.tags)) {
-          onAddTags(parsed.tags)
-          toast.success(`${parsed.tags.length} tag(s) ajouté(s)`)
-        } else {
-          toast.error('Format de tags inattendu')
-        }
-      } catch {
-        toast.error('Impossible de parser les tags')
-      }
-    } else if (result.action === 'improve') {
-      // Améliorer = remplace le contenu
-      onReplaceContent(result.text)
-      toast.success('Contenu amélioré')
-    } else if (result.action === 'actions') {
-      // FIX 4 : Extraire actions = insère EN DESSOUS, ne remplace pas
-      onInsert('\n\n---\n📋 Actions extraites :\n' + result.text)
-      toast.success('Actions insérées dans la note')
-    } else if (result.action === 'title') {
-      // FIX : titre = applique proprement sans guillemets parasites
-      const cleanTitle = result.text.replace(/^["«\s]+|["»\s]+$/g, '').trim()
-      onSetTitle(cleanTitle)
-      toast.success('Titre mis à jour')
-    } else {
-      // summarize, complete = insère en dessous
-      onInsert('\n\n---\n' + result.text)
-      toast.success('Inséré dans la note')
-    }
-    setResult(null)
-  }
-
-  const AI_ACTIONS = [
-    { id: 'summarize' as AIAction, label: 'Résumer', icon: AlignLeft, desc: 'Résumé en 3 phrases' },
-    { id: 'actions' as AIAction, label: 'Extraire actions', icon: ListChecks, desc: 'Todo list depuis le texte' },
-    { id: 'improve' as AIAction, label: 'Améliorer', icon: Wand2, desc: 'Réécriture plus claire' },
-    { id: 'autotag' as AIAction, label: 'Auto-tags', icon: Tags, desc: 'Tags suggérés par IA' },
-    { id: 'title' as AIAction, label: 'Titre IA', icon: Lightbulb, desc: 'Générer un titre' },
-    { id: 'complete' as AIAction, label: 'Continuer', icon: ArrowRight, desc: 'Complétion du texte' },
-  ]
-
-  // Aperçu lisible selon le type d'action
-  const getResultPreview = () => {
-    if (!result) return ''
-    if (result.action === 'autotag') {
-      try {
-        const cleaned = result.text.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim()
-        const p = JSON.parse(cleaned)
-        return (p.tags ?? []).join(', ') || 'Aucun tag suggéré'
-      } catch { return result.text }
-    }
-    if (result.action === 'title') {
-      return result.text.replace(/^["«\s]+|["»\s]+$/g, '').trim()
-    }
-    return result.text.slice(0, 220) + (result.text.length > 220 ? '…' : '')
-  }
-
+// ─── Editor Toolbar ───────────────────────────────────────────────────────────
+function EditorToolbar({ onInsert, onTemplate, showPreview, onTogglePreview }: {
+  onInsert: (text: string, offset?: number) => void
+  onTemplate: (content: string) => void
+  showPreview: boolean
+  onTogglePreview: () => void
+}) {
+  const [showTemplates, setShowTemplates] = useState(false)
   return (
     <div style={{
-      width: 240, borderLeft: '1px solid rgba(255,255,255,0.06)',
-      background: 'rgba(10,12,20,0.95)', display: 'flex',
-      flexDirection: 'column', animation: 'slideIn 0.2s ease',
-      flexShrink: 0,
+      padding: '4px 16px', borderBottom: '1px solid rgba(255,255,255,0.04)',
+      display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0,
+      background: 'rgba(255,255,255,0.01)',
     }}>
-      {/* Header */}
-      <div style={{
-        padding: '12px 14px', borderBottom: '1px solid rgba(255,255,255,0.06)',
-        display: 'flex', alignItems: 'center', gap: 7,
-      }}>
-        <Sparkles style={{ width: 12, height: 12, color: '#7F77DD' }} />
-        <span style={{ fontSize: 11, fontWeight: 600, color: 'rgba(255,255,255,0.6)', fontFamily: "'IBM Plex Mono', monospace", letterSpacing: '0.08em' }}>
-          IA ASSISTANT
-        </span>
+      <button className="toolbar-btn" title="Gras (⌘B)" onClick={() => onInsert('****', 2)}>
+        <Bold style={{ width: 12, height: 12 }} />
+      </button>
+      <button className="toolbar-btn" title="Titre 1" onClick={() => onInsert('# ')}>
+        <span style={{ fontSize: 10, fontWeight: 800, fontFamily: "'Syne', sans-serif" }}>H1</span>
+      </button>
+      <button className="toolbar-btn" title="Titre 2" onClick={() => onInsert('## ')}>
+        <span style={{ fontSize: 10, fontWeight: 700, fontFamily: "'Syne', sans-serif" }}>H2</span>
+      </button>
+      <div style={{ width: 1, height: 14, background: 'rgba(255,255,255,0.08)', margin: '0 4px' }} />
+      <button className="toolbar-btn" title="Case à cocher" onClick={() => onInsert('☐ ')}>
+        <CheckSquare style={{ width: 12, height: 12 }} />
+      </button>
+      <button className="toolbar-btn" title="Liste" onClick={() => onInsert('- ')}>
+        <AlignLeft style={{ width: 12, height: 12 }} />
+      </button>
+      <button className="toolbar-btn" title="Citation" onClick={() => onInsert('> ')}>
+        <span style={{ fontSize: 13, lineHeight: 1 }}>❝</span>
+      </button>
+      <button className="toolbar-btn" title="Séparateur" onClick={() => onInsert('---\n', 0)}>
+        <Minus style={{ width: 12, height: 12 }} />
+      </button>
+      <div style={{ width: 1, height: 14, background: 'rgba(255,255,255,0.08)', margin: '0 4px' }} />
+      <div style={{ position: 'relative' }}>
+        <button className="toolbar-btn" onClick={() => setShowTemplates(p => !p)} style={{ gap: 4, display: 'flex', alignItems: 'center' }}>
+          <FileText style={{ width: 12, height: 12 }} />
+          <span style={{ fontSize: 10, fontFamily: "'IBM Plex Mono', monospace" }}>Templates</span>
+          <ChevronRight style={{ width: 9, height: 9, transform: showTemplates ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s' }} />
+        </button>
+        {showTemplates && (
+          <div style={{ position: 'absolute', top: '100%', left: 0, zIndex: 30, background: '#151820', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 10, padding: 6, minWidth: 180, boxShadow: '0 8px 32px rgba(0,0,0,0.5)', animation: 'fadeIn 0.15s ease' }}>
+            {TEMPLATES.map(t => (
+              <button key={t.label} className="slash-item"
+                onClick={() => { onTemplate(t.content); setShowTemplates(false) }}
+                style={{ display: 'block', width: '100%', textAlign: 'left', padding: '7px 10px', background: 'transparent', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 11, color: 'rgba(255,255,255,0.7)', fontFamily: "'IBM Plex Mono', monospace" }}>
+                {t.label}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
-
-      {/* Actions */}
-      <div style={{ padding: '10px 10px', display: 'flex', flexDirection: 'column', gap: 4 }}>
-        {AI_ACTIONS.map(({ id, label, icon: Icon, desc }) => (
-          <button
-            key={id}
-            onClick={() => run(id)}
-            disabled={!!loading}
-            className="action-btn"
-            style={{
-              display: 'flex', alignItems: 'center', gap: 9,
-              padding: '8px 10px', background: loading === id ? 'rgba(127,119,221,0.1)' : 'transparent',
-              border: '1px solid', borderColor: loading === id ? 'rgba(127,119,221,0.3)' : 'rgba(255,255,255,0.05)',
-              borderRadius: 8, cursor: loading ? 'not-allowed' : 'pointer',
-              textAlign: 'left', opacity: loading && loading !== id ? 0.4 : 1,
-            }}
-          >
-            {loading === id
-              ? <Loader2 className="ai-thinking" style={{ width: 12, height: 12, color: '#7F77DD', flexShrink: 0 }} />
-              : <Icon style={{ width: 12, height: 12, color: 'rgba(255,255,255,0.35)', flexShrink: 0 }} />
-            }
-            <div>
-              <div style={{ fontSize: 11, fontWeight: 600, color: loading === id ? '#7F77DD' : 'rgba(255,255,255,0.7)' }}>{label}</div>
-              <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.25)', fontFamily: "'IBM Plex Mono', monospace" }}>{desc}</div>
-            </div>
-          </button>
-        ))}
-      </div>
-
-      {/* Result — s'affiche toujours avant d'appliquer */}
-      {result && (
-        <div style={{
-          margin: '0 10px 10px', padding: 12,
-          background: 'rgba(127,119,221,0.08)', border: '1px solid rgba(127,119,221,0.2)',
-          borderRadius: 10, animation: 'fadeIn 0.2s ease',
-        }}>
-          <div style={{ fontSize: 10, color: '#7F77DD', fontFamily: "'IBM Plex Mono', monospace", marginBottom: 6, fontWeight: 600 }}>
-            {AI_ACTIONS.find(a => a.id === result.action)?.label} · aperçu
-          </div>
-          <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.6)', lineHeight: 1.6, marginBottom: 10, whiteSpace: 'pre-wrap', fontFamily: "'IBM Plex Mono', monospace" }}>
-            {getResultPreview()}
-          </div>
-          <div style={{ display: 'flex', gap: 6 }}>
-            <button onClick={applyResult} style={{
-              flex: 1, padding: '6px 0', fontSize: 10, fontWeight: 600,
-              color: '#fff', background: '#7F77DD', border: 'none',
-              borderRadius: 6, cursor: 'pointer',
-            }}>
-              ✓ Appliquer
-            </button>
-            <button onClick={() => setResult(null)} style={{
-              padding: '6px 8px', fontSize: 10, color: 'rgba(255,255,255,0.3)',
-              background: 'transparent', border: '1px solid rgba(255,255,255,0.08)',
-              borderRadius: 6, cursor: 'pointer',
-            }}>
-              <X style={{ width: 10, height: 10 }} />
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Hint */}
-      <div style={{ marginTop: 'auto', padding: '10px 14px', borderTop: '1px solid rgba(255,255,255,0.04)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-          <Keyboard style={{ width: 10, height: 10, color: 'rgba(255,255,255,0.2)' }} />
-          <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.2)', fontFamily: "'IBM Plex Mono', monospace" }}>Cmd+K pour ouvrir / fermer</span>
-        </div>
+      <div style={{ marginLeft: 'auto' }}>
+        <button className={`toolbar-btn ${showPreview ? 'active' : ''}`} onClick={onTogglePreview} style={{ gap: 4, display: 'flex', alignItems: 'center' }}>
+          <Eye style={{ width: 12, height: 12 }} />
+          <span style={{ fontSize: 10, fontFamily: "'IBM Plex Mono', monospace" }}>{showPreview ? 'Éditer' : 'Aperçu'}</span>
+        </button>
       </div>
     </div>
   )
@@ -346,16 +234,15 @@ function NoteEditor({ note, meetings, onSave, onClose }: {
   const [tags, setTags] = useState<string[]>(note?.tags ?? [])
   const [saving, setSaving] = useState(false)
   const [tagInput, setTagInput] = useState('')
-  const [showAI, setShowAI] = useState(false)
-  const [aiCompletion, setAiCompletion] = useState('')
-  const [completionLoading, setCompletionLoading] = useState(false)
+  const [showPreview, setShowPreview] = useState(false)
+  const [slashMenu, setSlashMenu] = useState<{ visible: boolean; query: string; lineStart: number }>({ visible: false, query: '', lineStart: 0 })
+  const [slashIndex, setSlashIndex] = useState(0)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
-  // Global keyboard shortcut Cmd+K
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === 'k') { e.preventDefault(); setShowAI(p => !p) }
       if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') handleSave()
+      if ((e.metaKey || e.ctrlKey) && e.key === 'p') { e.preventDefault(); setShowPreview(p => !p) }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
@@ -373,213 +260,191 @@ function NoteEditor({ note, meetings, onSave, onClose }: {
   const addTag = (label: string) => { if (!tags.includes(label)) setTags([...tags, label]); setTagInput('') }
   const removeTag = (label: string) => setTags(tags.filter(t => t !== label))
 
-  const insertAtCursor = (text: string) => {
+  const insertAtCursor = useCallback((text: string, cursorOffset?: number) => {
     const ta = textareaRef.current
-    if (!ta) { setContent(c => c + text); return }
-    const pos = ta.selectionStart
-    const newContent = content.slice(0, pos) + text + content.slice(pos)
+    if (!ta) { setContent((c: string) => c + text); return }
+    const start = ta.selectionStart
+    const end = ta.selectionEnd
+    const before = content.slice(0, start)
+    const after = content.slice(end)
+    const blockPrefixes = ['# ', '## ', '### ', '- ', '> ', '☐ ', '---\n']
+    const needsNewline = blockPrefixes.some(p => text.startsWith(p)) && before.length > 0 && !before.endsWith('\n')
+    const prefix = needsNewline ? '\n' : ''
+    const newContent = before + prefix + text + after
     setContent(newContent)
-    setTimeout(() => { ta.selectionStart = ta.selectionEnd = pos + text.length; ta.focus() }, 0)
-  }
-
-  const insertCheckbox = () => insertAtCursor('☐ ')
-
-  // Tab autocomplete
-  const handleTabComplete = async () => {
-    if (completionLoading) return
-    setCompletionLoading(true)
-    try {
-      const completion = await runAIAction('complete', content, title)
-      setAiCompletion(completion)
-    } catch {} finally { setCompletionLoading(false) }
-  }
-
-  const acceptCompletion = () => {
-    if (!aiCompletion) return
-    setContent(c => c + aiCompletion)
-    setAiCompletion('')
-  }
+    const newPos = start + prefix.length + text.length - (cursorOffset ?? 0)
+    setTimeout(() => { ta.selectionStart = ta.selectionEnd = newPos; ta.focus() }, 0)
+  }, [content])
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Tab' && !e.shiftKey) {
-      e.preventDefault()
-      if (aiCompletion) { acceptCompletion(); return }
-      handleTabComplete()
+    if (slashMenu.visible) {
+      if (e.key === 'ArrowDown') { e.preventDefault(); setSlashIndex(i => Math.min(i + 1, filteredSlash.length - 1)); return }
+      if (e.key === 'ArrowUp') { e.preventDefault(); setSlashIndex(i => Math.max(i - 1, 0)); return }
+      if (e.key === 'Enter') { e.preventDefault(); applySlashItem(filteredSlash[slashIndex]); return }
+      if (e.key === 'Escape') { setSlashMenu({ visible: false, query: '', lineStart: 0 }); return }
     }
-    if (e.key === 'Escape' && aiCompletion) { setAiCompletion(''); return }
-    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); handleSave() }
-    if (e.key === 'Enter') setAiCompletion('')
+    if (e.key === 'Enter' && !e.shiftKey && !slashMenu.visible) {
+      const ta = textareaRef.current
+      if (!ta) return
+      const pos = ta.selectionStart
+      const lineStart = content.lastIndexOf('\n', pos - 1) + 1
+      const line = content.slice(lineStart, pos)
+      if (line === '☐ ' || line === '☑ ') {
+        e.preventDefault()
+        const newContent = content.slice(0, lineStart) + '\n' + content.slice(pos)
+        setContent(newContent)
+        setTimeout(() => { ta.selectionStart = ta.selectionEnd = lineStart + 1; ta.focus() }, 0)
+        return
+      }
+      if (line.startsWith('☐ ') || line.startsWith('☑ ')) { e.preventDefault(); insertAtCursor('\n☐ ', 0); return }
+      if (line === '- ') {
+        e.preventDefault()
+        const newContent = content.slice(0, lineStart) + '\n' + content.slice(pos)
+        setContent(newContent)
+        setTimeout(() => { ta.selectionStart = ta.selectionEnd = lineStart + 1; ta.focus() }, 0)
+        return
+      }
+      if (line.startsWith('- ')) { e.preventDefault(); insertAtCursor('\n- ', 0); return }
+    }
+    if (e.key === 'Tab') { e.preventDefault(); insertAtCursor('  ', 0) }
+    if ((e.metaKey || e.ctrlKey) && e.key === 'b') { e.preventDefault(); insertAtCursor('****', 2) }
   }
 
-  const wc = wordCount(content)
+  const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const val = e.target.value
+    setContent(val)
+    const pos = e.target.selectionStart
+    const lineStart = val.lastIndexOf('\n', pos - 1) + 1
+    const lineUpToCursor = val.slice(lineStart, pos)
+    if (lineUpToCursor === '/') {
+      setSlashMenu({ visible: true, query: '', lineStart })
+      setSlashIndex(0)
+    } else if (slashMenu.visible && lineUpToCursor.startsWith('/')) {
+      setSlashMenu(m => ({ ...m, query: lineUpToCursor.slice(1).toLowerCase() }))
+      setSlashIndex(0)
+    } else {
+      setSlashMenu({ visible: false, query: '', lineStart: 0 })
+    }
+  }
+
+  const filteredSlash = SLASH_ITEMS.filter(s =>
+    !slashMenu.query || s.label.toLowerCase().includes(slashMenu.query)
+  )
+
+  const applySlashItem = (item: typeof SLASH_ITEMS[0]) => {
+    const ta = textareaRef.current
+    if (!ta) return
+    const pos = ta.selectionStart
+    const lineStart = content.lastIndexOf('\n', pos - 1) + 1
+    const before = content.slice(0, lineStart)
+    const after = content.slice(pos)
+    const newContent = before + item.insert + after
+    setContent(newContent)
+    const offset = item.offset ?? 0
+    const newPos = lineStart + item.insert.length - offset
+    setTimeout(() => { ta.selectionStart = ta.selectionEnd = newPos; ta.focus() }, 0)
+    setSlashMenu({ visible: false, query: '', lineStart: 0 })
+  }
+
   const linked = meetings.find(m => m.date?.startsWith(forDate))
+  const wc = wordCount(content)
 
   return (
-    <div style={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
-      {/* Main editor */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-        {/* Topbar */}
-        <div style={{
-          padding: '0 20px', height: 52, borderBottom: '1px solid rgba(255,255,255,0.06)',
-          display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0,
-          background: 'rgba(255,255,255,0.01)',
-        }}>
-          <input
-            value={title} onChange={e => setTitle(e.target.value)}
-            placeholder="Titre de la note..."
-            style={{
-              flex: 1, background: 'transparent', border: 'none',
-              fontSize: 15, fontWeight: 700, color: '#fff', outline: 'none',
-              fontFamily: "'Syne', sans-serif", letterSpacing: '-0.02em',
-            }}
-          />
-          <div style={{ display: 'flex', gap: 5, flexShrink: 0 }}>
-            <button type="button" onClick={insertCheckbox} title="Case à cocher (☐)"
-              className="action-btn"
-              style={{ padding: 7, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 7, cursor: 'pointer', color: 'rgba(255,255,255,0.35)', display: 'flex' }}>
-              <CheckSquare style={{ width: 13, height: 13 }} />
-            </button>
-            <button type="button" onClick={() => setShowAI(p => !p)} title="Assistant IA (Cmd+K)"
-              className="action-btn"
-              style={{ padding: 7, background: showAI ? 'rgba(127,119,221,0.15)' : 'rgba(255,255,255,0.03)', border: `1px solid ${showAI ? 'rgba(127,119,221,0.4)' : 'rgba(255,255,255,0.07)'}`, borderRadius: 7, cursor: 'pointer', color: showAI ? '#7F77DD' : 'rgba(255,255,255,0.35)', display: 'flex', gap: 4, alignItems: 'center' }}>
-              <Sparkles style={{ width: 13, height: 13 }} />
-            </button>
-            <button type="button" onClick={onClose}
-              className="action-btn"
-              style={{ padding: 7, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 7, cursor: 'pointer', color: 'rgba(255,255,255,0.35)', display: 'flex' }}>
-              <X style={{ width: 13, height: 13 }} />
-            </button>
-            <button type="button" onClick={handleSave} disabled={saving || !title.trim()}
-              style={{
-                padding: '7px 16px', background: title.trim() ? '#1D9E75' : 'rgba(29,158,117,0.3)',
-                border: 'none', borderRadius: 7, cursor: title.trim() ? 'pointer' : 'not-allowed',
-                color: '#fff', fontSize: 12, fontWeight: 600, display: 'flex',
-                alignItems: 'center', gap: 5, transition: 'all 0.15s',
-              }}>
-              {saving ? <Loader2 style={{ width: 12, height: 12, animation: 'spin 1s linear infinite' }} /> : null}
-              {note ? 'Sauvegarder' : 'Créer'}
-            </button>
-          </div>
-        </div>
-
-        {/* Meta row */}
-        <div style={{
-          padding: '8px 20px', borderBottom: '1px solid rgba(255,255,255,0.04)',
-          display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, flexWrap: 'wrap',
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <CalendarDays style={{ width: 11, height: 11, color: 'rgba(255,255,255,0.25)' }} />
-            <input type="date" value={forDate} onChange={e => setForDate(e.target.value)}
-              style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 6, padding: '3px 8px', fontSize: 11, color: '#fff', outline: 'none', fontFamily: "'IBM Plex Mono', monospace" }} />
-            {linked && <span style={{ fontSize: 10, color: '#1D9E75', fontFamily: "'IBM Plex Mono', monospace" }}>→ {linked.title}</span>}
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
-            {tags.map(t => {
-              const preset = TAG_PRESETS.find(p => p.label === t)
-              return <TagPill key={t} label={t} color={preset?.color ?? '#8b90a4'} onRemove={() => removeTag(t)} />
-            })}
-            <div style={{ position: 'relative' }}>
-              <input
-                value={tagInput} onChange={e => setTagInput(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter' && tagInput.trim()) addTag(tagInput.trim()) }}
-                placeholder="+ Tag"
-                style={{ width: 55, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 4, padding: '2px 7px', fontSize: 10, color: 'rgba(255,255,255,0.5)', outline: 'none', fontFamily: "'IBM Plex Mono', monospace" }}
-              />
-            </div>
-            {TAG_PRESETS.filter(p => !tags.includes(p.label)).slice(0, 4).map(p => (
-              <button key={p.label} type="button" onClick={() => addTag(p.label)}
-                style={{ padding: '2px 7px', background: `${p.color}10`, border: `1px solid ${p.color}25`, borderRadius: 4, fontSize: 10, color: p.color, cursor: 'pointer', fontFamily: "'IBM Plex Mono', monospace", opacity: 0.55, transition: 'opacity 0.1s' }}
-                onMouseEnter={e => (e.currentTarget as HTMLElement).style.opacity = '1'}
-                onMouseLeave={e => (e.currentTarget as HTMLElement).style.opacity = '0.55'}>
-                + {p.label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Textarea with ghost completion */}
-        <div style={{ flex: 1, overflow: 'hidden', position: 'relative' }}>
-          <textarea
-            ref={textareaRef}
-            className="note-textarea"
-            value={content}
-            onChange={e => { setContent(e.target.value); setAiCompletion('') }}
-            onKeyDown={handleKeyDown}
-            placeholder={`Commencez à écrire...\n\n# Titre de section\n## Sous-titre\n☐ Action à faire\n\nTab → complétion IA · Cmd+K → assistant`}
-            style={{
-              position: 'absolute', inset: 0,
-              background: 'transparent', border: 'none',
-              padding: '20px 24px', fontSize: 13.5, color: 'rgba(255,255,255,0.82)',
-              outline: 'none', resize: 'none', lineHeight: 1.75,
-              fontFamily: "'IBM Plex Mono', monospace", zIndex: 2,
-              width: '100%', height: '100%',
-            }}
-          />
-          {/* Ghost text overlay for AI completion */}
-          {aiCompletion && (
-            <div style={{
-              position: 'absolute', bottom: 0, left: 0, right: 0,
-              padding: '0 24px 12px',
-              pointerEvents: 'none', zIndex: 1,
-            }}>
-              <div style={{
-                background: 'rgba(127,119,221,0.08)', border: '1px solid rgba(127,119,221,0.2)',
-                borderRadius: 8, padding: '8px 12px', animation: 'fadeIn 0.15s ease',
-              }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                  <Sparkles style={{ width: 10, height: 10, color: '#7F77DD' }} />
-                  <span style={{ fontSize: 9, color: 'rgba(127,119,221,0.8)', fontFamily: "'IBM Plex Mono', monospace" }}>Suggestion IA · Tab pour accepter · Esc pour ignorer</span>
-                </div>
-                <p style={{ fontSize: 12.5, color: 'rgba(127,119,221,0.65)', fontFamily: "'IBM Plex Mono', monospace", margin: 0, lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
-                  {aiCompletion}
-                </p>
-              </div>
-            </div>
-          )}
-          {completionLoading && (
-            <div style={{
-              position: 'absolute', bottom: 12, left: 24,
-              display: 'flex', alignItems: 'center', gap: 6,
-              padding: '5px 10px', background: 'rgba(127,119,221,0.08)',
-              border: '1px solid rgba(127,119,221,0.15)', borderRadius: 6,
-            }}>
-              <Loader2 className="ai-thinking" style={{ width: 10, height: 10, color: '#7F77DD' }} />
-              <span style={{ fontSize: 10, color: 'rgba(127,119,221,0.6)', fontFamily: "'IBM Plex Mono', monospace" }}>Génération…</span>
-            </div>
-          )}
-        </div>
-
-        {/* Footer */}
-        <div style={{
-          padding: '6px 20px', borderTop: '1px solid rgba(255,255,255,0.04)',
-          display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0,
-          background: 'rgba(255,255,255,0.01)',
-        }}>
-          <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.18)', fontFamily: "'IBM Plex Mono', monospace" }}>{wc} mot{wc !== 1 ? 's' : ''}</span>
-          <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.18)', fontFamily: "'IBM Plex Mono', monospace" }}>{content.length} car.</span>
-          <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.12)', fontFamily: "'IBM Plex Mono', monospace", marginLeft: 'auto' }}>
-            Cmd+Enter sauvegarder · Tab complétion IA · Cmd+K assistant
-          </span>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+      {/* Topbar */}
+      <div style={{ padding: '0 20px', height: 52, borderBottom: '1px solid rgba(255,255,255,0.06)', display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, background: 'rgba(255,255,255,0.01)' }}>
+        <input value={title} onChange={e => setTitle(e.target.value)} placeholder="Titre de la note..."
+          style={{ flex: 1, background: 'transparent', border: 'none', fontSize: 15, fontWeight: 700, color: '#fff', outline: 'none', fontFamily: "'Syne', sans-serif", letterSpacing: '-0.02em' }} />
+        <div style={{ display: 'flex', gap: 5, flexShrink: 0 }}>
+          <button type="button" onClick={onClose} className="action-btn"
+            style={{ padding: 7, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 7, cursor: 'pointer', color: 'rgba(255,255,255,0.35)', display: 'flex' }}>
+            <X style={{ width: 13, height: 13 }} />
+          </button>
+          <button type="button" onClick={handleSave} disabled={saving || !title.trim()}
+            style={{ padding: '7px 16px', background: title.trim() ? '#1D9E75' : 'rgba(29,158,117,0.3)', border: 'none', borderRadius: 7, cursor: title.trim() ? 'pointer' : 'not-allowed', color: '#fff', fontSize: 12, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 5 }}>
+            {saving ? <Loader2 style={{ width: 12, height: 12, animation: 'spin 1s linear infinite' }} /> : null}
+            {note ? 'Sauvegarder' : 'Créer'}
+          </button>
         </div>
       </div>
 
-      {/* AI Panel (conditionally shown) */}
-      {showAI && (
-        <AIPanel
-          title={title}
-          content={content}
-          onInsert={text => setContent(c => c + text)}
-          onReplaceContent={setContent}
-          onSetTitle={setTitle}
-          onAddTags={newTags => {
-            setTags(prev => {
-              const merged = [...prev]
-              newTags.forEach((t: string) => { if (!merged.includes(t)) merged.push(t) })
-              return merged
-            })
-          }}
-        />
-      )}
+      {/* Meta row */}
+      <div style={{ padding: '7px 20px', borderBottom: '1px solid rgba(255,255,255,0.04)', display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <CalendarDays style={{ width: 11, height: 11, color: 'rgba(255,255,255,0.25)' }} />
+          <input type="date" value={forDate} onChange={e => setForDate(e.target.value)}
+            style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 6, padding: '3px 8px', fontSize: 11, color: '#fff', outline: 'none', fontFamily: "'IBM Plex Mono', monospace" }} />
+          {linked && <span style={{ fontSize: 10, color: '#1D9E75', fontFamily: "'IBM Plex Mono', monospace" }}>→ {linked.title}</span>}
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
+          {tags.map(t => {
+            const preset = TAG_PRESETS.find(p => p.label === t)
+            return <TagPill key={t} label={t} color={preset?.color ?? '#8b90a4'} onRemove={() => removeTag(t)} />
+          })}
+          <input value={tagInput} onChange={e => setTagInput(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter' && tagInput.trim()) addTag(tagInput.trim()) }}
+            placeholder="+ Tag"
+            style={{ width: 55, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 4, padding: '2px 7px', fontSize: 10, color: 'rgba(255,255,255,0.5)', outline: 'none', fontFamily: "'IBM Plex Mono', monospace" }} />
+          {TAG_PRESETS.filter(p => !tags.includes(p.label)).slice(0, 4).map(p => (
+            <button key={p.label} type="button" onClick={() => addTag(p.label)}
+              style={{ padding: '2px 7px', background: `${p.color}10`, border: `1px solid ${p.color}25`, borderRadius: 4, fontSize: 10, color: p.color, cursor: 'pointer', fontFamily: "'IBM Plex Mono', monospace", opacity: 0.55 }}
+              onMouseEnter={e => (e.currentTarget as HTMLElement).style.opacity = '1'}
+              onMouseLeave={e => (e.currentTarget as HTMLElement).style.opacity = '0.55'}>
+              + {p.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Toolbar */}
+      <EditorToolbar onInsert={insertAtCursor} onTemplate={c => setContent(c)} showPreview={showPreview} onTogglePreview={() => setShowPreview(p => !p)} />
+
+      {/* Editor / Preview */}
+      <div style={{ flex: 1, overflow: 'hidden', position: 'relative' }}>
+        {showPreview ? (
+          <div style={{ height: '100%', overflowY: 'auto', padding: '24px 28px', maxWidth: 720 }}>
+            {content ? renderMarkdown(content) : (
+              <p style={{ color: 'rgba(255,255,255,0.15)', fontFamily: "'IBM Plex Mono', monospace", fontSize: 13 }}>Rien à afficher…</p>
+            )}
+          </div>
+        ) : (
+          <>
+            <textarea ref={textareaRef} className="note-textarea" value={content}
+              onChange={handleChange} onKeyDown={handleKeyDown}
+              placeholder={`Commencez à écrire…\n\nTapez / pour les commandes rapides\n# Titre  ## Sous-titre  ☐ Action\n- Liste  > Citation  ---\n\n⌘+Enter sauvegarder · ⌘+P aperçu`}
+              style={{ position: 'absolute', inset: 0, background: 'transparent', border: 'none', padding: '20px 24px', fontSize: 13.5, color: 'rgba(255,255,255,0.82)', outline: 'none', resize: 'none', lineHeight: 1.8, fontFamily: "'IBM Plex Mono', monospace", zIndex: 2, width: '100%', height: '100%' }}
+            />
+            {/* Slash menu */}
+            {slashMenu.visible && filteredSlash.length > 0 && (
+              <div className="slash-menu" style={{ position: 'absolute', bottom: 60, left: 24, zIndex: 20, background: '#151820', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 10, padding: 6, minWidth: 220, boxShadow: '0 8px 32px rgba(0,0,0,0.6)' }}>
+                <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.25)', fontFamily: "'IBM Plex Mono', monospace", padding: '4px 10px 6px', letterSpacing: '0.08em' }}>
+                  COMMANDES · ↑↓ naviguer · ↵ insérer
+                </div>
+                {filteredSlash.map((item, idx) => (
+                  <button key={item.label} className="slash-item"
+                    onClick={() => applySlashItem(item)}
+                    style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', textAlign: 'left', padding: '7px 10px', background: idx === slashIndex ? 'rgba(29,158,117,0.12)' : 'transparent', border: 'none', borderRadius: 6, cursor: 'pointer', color: idx === slashIndex ? '#1D9E75' : 'rgba(255,255,255,0.6)' }}>
+                    <span style={{ width: 22, fontSize: 11, fontWeight: 700, fontFamily: "'IBM Plex Mono', monospace", color: idx === slashIndex ? '#1D9E75' : 'rgba(255,255,255,0.3)', textAlign: 'center' }}>{item.icon}</span>
+                    <div>
+                      <div style={{ fontSize: 11, fontWeight: 600 }}>{item.label}</div>
+                      <div style={{ fontSize: 9.5, color: 'rgba(255,255,255,0.3)', fontFamily: "'IBM Plex Mono', monospace" }}>{item.desc}</div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
+      {/* Footer */}
+      <div style={{ padding: '5px 20px', borderTop: '1px solid rgba(255,255,255,0.04)', display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0, background: 'rgba(255,255,255,0.01)' }}>
+        <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.18)', fontFamily: "'IBM Plex Mono', monospace" }}>{wc} mot{wc !== 1 ? 's' : ''}</span>
+        <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.18)', fontFamily: "'IBM Plex Mono', monospace" }}>{content.length} car.</span>
+        <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.1)', fontFamily: "'IBM Plex Mono', monospace", marginLeft: 'auto' }}>
+          / commandes · ⌘B gras · ⌘P aperçu · ⌘↵ sauvegarder
+        </span>
+      </div>
     </div>
   )
 }
@@ -588,54 +453,36 @@ function NoteEditor({ note, meetings, onSave, onClose }: {
 function NoteCard({ note, meetings, isSelected, onClick, search }: {
   note: any; meetings: any[]; isSelected: boolean; onClick: () => void; search: string
 }) {
-  const linked = note.for_meeting_date ? meetings.find(m => m.date?.startsWith(note.for_meeting_date)) : null
-  const preview = note.content?.replace(/[☐☑]/g, '').replace(/^[#]+\s/gm, '').trim().slice(0, 85) ?? ''
+  const linked = note.for_meeting_date ? meetings.find((m: any) => m.date?.startsWith(note.for_meeting_date)) : null
+  const preview = note.content?.replace(/[☐☑]/g, '').replace(/^[#>*-]+\s/gm, '').replace(/\*\*/g, '').trim().slice(0, 90) ?? ''
   const checked = (note.content ?? '').match(/☑/g)?.length ?? 0
   const total = ((note.content ?? '').match(/[☐☑]/g) ?? []).length
   const hasSoon = note.for_meeting_date && isBefore(new Date(), addDays(new Date(note.for_meeting_date), 1)) && isAfter(new Date(note.for_meeting_date), new Date())
 
   return (
-    <button
-      className="note-card-btn"
-      onClick={onClick}
-      style={{
-        width: '100%', textAlign: 'left', padding: '12px 14px',
-        borderBottom: '1px solid rgba(255,255,255,0.03)',
-        borderLeft: `2px solid ${isSelected ? '#1D9E75' : 'transparent'}`,
-        background: isSelected ? 'rgba(29,158,117,0.06)' : 'transparent',
-        cursor: 'pointer', transition: 'all 0.1s', display: 'block',
-      }}
+    <button className="note-card-btn" onClick={onClick} style={{ width: '100%', textAlign: 'left', padding: '11px 14px', borderBottom: '1px solid rgba(255,255,255,0.03)', borderLeft: `2px solid ${isSelected ? '#1D9E75' : 'transparent'}`, background: isSelected ? 'rgba(29,158,117,0.06)' : 'transparent', cursor: 'pointer', transition: 'all 0.1s', display: 'block' }}
       onMouseEnter={e => { if (!isSelected) (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.025)' }}
-      onMouseLeave={e => { if (!isSelected) (e.currentTarget as HTMLElement).style.background = 'transparent' }}
-    >
-      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 3 }}>
-            <span style={{
-              fontSize: 12.5, fontWeight: 600,
-              color: note.is_archived ? 'rgba(255,255,255,0.3)' : isSelected ? '#fff' : 'rgba(255,255,255,0.8)',
-              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-              fontStyle: note.is_archived ? 'italic' : 'normal',
-              fontFamily: "'Syne', sans-serif",
-            }}>
-              {search ? <Highlight text={note.title} query={search} /> : note.title}
-            </span>
-            {hasSoon && <span style={{ fontSize: 8, color: '#1D9E75', background: '#1D9E7515', borderRadius: 3, padding: '1px 5px', fontFamily: "'IBM Plex Mono', monospace", flexShrink: 0 }}>BIENTÔT</span>}
-          </div>
-          {preview && (
-            <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.28)', margin: '0 0 5px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', lineHeight: 1.4, fontFamily: "'IBM Plex Mono', monospace" }}>
-              {search ? <Highlight text={preview} query={search} /> : preview}
-            </p>
-          )}
-          <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', alignItems: 'center' }}>
-            <span style={{ fontSize: 9.5, color: 'rgba(255,255,255,0.18)', fontFamily: "'IBM Plex Mono', monospace" }}>{fRelative(note.created_at)}</span>
-            {linked && <span style={{ fontSize: 9, color: '#378ADD', background: '#378ADD10', borderRadius: 3, padding: '1px 5px', fontFamily: "'IBM Plex Mono', monospace" }}>📅 {linked.title?.slice(0, 18)}</span>}
-            {total > 0 && <span style={{ fontSize: 9, color: checked === total ? '#1D9E75' : '#EF9F27', fontFamily: "'IBM Plex Mono', monospace" }}>☑ {checked}/{total}</span>}
-            {(note.tags ?? []).slice(0, 2).map((t: string) => {
-              const p = TAG_PRESETS.find(x => x.label === t)
-              return <TagPill key={t} label={t} color={p?.color ?? '#8b90a4'} small />
-            })}
-          </div>
+      onMouseLeave={e => { if (!isSelected) (e.currentTarget as HTMLElement).style.background = 'transparent' }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 3 }}>
+          <span style={{ fontSize: 12.5, fontWeight: 600, color: note.is_archived ? 'rgba(255,255,255,0.3)' : isSelected ? '#fff' : 'rgba(255,255,255,0.8)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontStyle: note.is_archived ? 'italic' : 'normal', fontFamily: "'Syne', sans-serif", flex: 1 }}>
+            {search ? <Highlight text={note.title} query={search} /> : note.title}
+          </span>
+          {hasSoon && <span style={{ fontSize: 8, color: '#1D9E75', background: '#1D9E7515', borderRadius: 3, padding: '1px 5px', fontFamily: "'IBM Plex Mono', monospace", flexShrink: 0 }}>BIENTÔT</span>}
+        </div>
+        {preview && (
+          <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.28)', margin: '0 0 5px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', lineHeight: 1.4, fontFamily: "'IBM Plex Mono', monospace" }}>
+            {search ? <Highlight text={preview} query={search} /> : preview}
+          </p>
+        )}
+        <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', alignItems: 'center' }}>
+          <span style={{ fontSize: 9.5, color: 'rgba(255,255,255,0.18)', fontFamily: "'IBM Plex Mono', monospace" }}>{fRelative(note.created_at)}</span>
+          {linked && <span style={{ fontSize: 9, color: '#378ADD', background: '#378ADD10', borderRadius: 3, padding: '1px 5px', fontFamily: "'IBM Plex Mono', monospace" }}>📅 {linked.title?.slice(0, 18)}</span>}
+          {total > 0 && <span style={{ fontSize: 9, color: checked === total ? '#1D9E75' : '#EF9F27', fontFamily: "'IBM Plex Mono', monospace" }}>☑ {checked}/{total}</span>}
+          {(note.tags ?? []).slice(0, 2).map((t: string) => {
+            const p = TAG_PRESETS.find(x => x.label === t)
+            return <TagPill key={t} label={t} color={p?.color ?? '#8b90a4'} small />
+          })}
         </div>
       </div>
     </button>
@@ -648,60 +495,29 @@ function NoteViewer({ note, meetings, onEdit, onArchive, onDelete, onToggleCheck
   onEdit: () => void; onArchive: () => void; onDelete: () => void
   onToggleCheckbox: (lineIndex: number) => void
 }) {
-  const renderContent = (content: string) => {
-    if (!content) return null
-    return content.split('\n').map((line, i) => {
-      if (line.startsWith('☐ ') || line.startsWith('☑ ')) {
-        const isChecked = line.startsWith('☑')
-        return (
-          <div key={i} onClick={() => onToggleCheckbox(i)}
-            style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 5, cursor: 'pointer', padding: '3px 6px', borderRadius: 6, transition: 'background 0.1s' }}
-            onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.03)'}
-            onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'transparent'}>
-            <span style={{ fontSize: 15, color: isChecked ? '#1D9E75' : 'rgba(255,255,255,0.35)', flexShrink: 0, marginTop: 1, userSelect: 'none' }}>{isChecked ? '☑' : '☐'}</span>
-            <span style={{ fontSize: 14, color: isChecked ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.75)', textDecoration: isChecked ? 'line-through' : 'none', lineHeight: 1.65, fontFamily: "'IBM Plex Mono', monospace", userSelect: 'none' }}>
-              {line.slice(2)}
-            </span>
-          </div>
-        )
-      }
-      if (line.startsWith('# ')) return <h2 key={i} style={{ fontSize: 17, fontWeight: 800, color: '#fff', margin: '20px 0 6px', fontFamily: "'Syne', sans-serif", letterSpacing: '-0.02em' }}>{line.slice(2)}</h2>
-      if (line.startsWith('## ')) return <h3 key={i} style={{ fontSize: 13.5, fontWeight: 600, color: 'rgba(255,255,255,0.7)', margin: '14px 0 5px', fontFamily: "'Syne', sans-serif" }}>{line.slice(3)}</h3>
-      if (line === '') return <div key={i} style={{ height: 10 }} />
-      return <p key={i} style={{ fontSize: 13.5, color: 'rgba(255,255,255,0.68)', margin: '0 0 4px', lineHeight: 1.75, fontFamily: "'IBM Plex Mono', monospace" }}>{line}</p>
-    })
-  }
-
-  const linkedMeeting = note.for_meeting_date ? meetings.find(m => m.date?.startsWith(note.for_meeting_date)) : null
+  const linkedMeeting = note.for_meeting_date ? meetings.find((m: any) => m.date?.startsWith(note.for_meeting_date)) : null
   const checked = (note.content ?? '').match(/☑/g)?.length ?? 0
   const total = ((note.content ?? '').match(/[☐☑]/g) ?? []).length
   const progress = total > 0 ? (checked / total) * 100 : 0
+  const wc = wordCount(note.content ?? '')
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      {/* Header */}
-      <div style={{
-        padding: '22px 28px 16px', borderBottom: '1px solid rgba(255,255,255,0.05)',
-        flexShrink: 0, background: 'linear-gradient(180deg, rgba(29,158,117,0.03) 0%, transparent 100%)',
-      }}>
-        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 12 }}>
+      <div style={{ padding: '20px 28px 14px', borderBottom: '1px solid rgba(255,255,255,0.05)', flexShrink: 0, background: 'linear-gradient(180deg, rgba(29,158,117,0.03) 0%, transparent 100%)' }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 10 }}>
           <div style={{ flex: 1 }}>
-            <h2 style={{ fontSize: 22, fontWeight: 800, color: '#fff', margin: '0 0 8px', letterSpacing: '-0.03em', fontFamily: "'Syne', sans-serif", lineHeight: 1.2 }}>
-              {note.title}
-            </h2>
+            <h2 style={{ fontSize: 22, fontWeight: 800, color: '#fff', margin: '0 0 8px', letterSpacing: '-0.03em', fontFamily: "'Syne', sans-serif", lineHeight: 1.2 }}>{note.title}</h2>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
               <span style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.28)', fontFamily: "'IBM Plex Mono', monospace", display: 'flex', alignItems: 'center', gap: 4 }}>
                 <Clock style={{ width: 10, height: 10 }} /> {fRelative(note.created_at)}
               </span>
               {note.updated_at && note.updated_at !== note.created_at && (
-                <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.2)', fontFamily: "'IBM Plex Mono', monospace" }}>
-                  · modifié {fRelative(note.updated_at)}
-                </span>
+                <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.2)', fontFamily: "'IBM Plex Mono', monospace" }}>· modifié {fRelative(note.updated_at)}</span>
               )}
+              <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.2)', fontFamily: "'IBM Plex Mono', monospace" }}>· {wc} mots</span>
               {linkedMeeting && (
                 <span style={{ fontSize: 10, color: '#378ADD', background: '#378ADD12', border: '1px solid #378ADD25', borderRadius: 4, padding: '1px 7px', fontFamily: "'IBM Plex Mono', monospace", display: 'flex', alignItems: 'center', gap: 4 }}>
-                  <CalendarDays style={{ width: 9, height: 9 }} />
-                  {fDate(note.for_meeting_date)}
+                  <CalendarDays style={{ width: 9, height: 9 }} /> {fDate(note.for_meeting_date)}
                 </span>
               )}
               {(note.tags ?? []).map((t: string) => {
@@ -712,12 +528,12 @@ function NoteViewer({ note, meetings, onEdit, onArchive, onDelete, onToggleCheck
           </div>
           <div style={{ display: 'flex', gap: 5, flexShrink: 0 }}>
             {[
+              { icon: Copy, onClick: () => { navigator.clipboard.writeText(`${note.title}\n\n${note.content ?? ''}`); toast.success('Copié !') }, title: 'Copier', hoverColor: '#7F77DD' },
               { icon: Edit3, onClick: onEdit, title: 'Modifier', hoverColor: '#fff' },
               { icon: Archive, onClick: onArchive, title: note.is_archived ? 'Désarchiver' : 'Archiver', hoverColor: '#EF9F27' },
               { icon: Trash2, onClick: onDelete, title: 'Supprimer', hoverColor: '#E24B4A' },
             ].map(({ icon: Icon, onClick, title, hoverColor }) => (
-              <button key={title} onClick={onClick} title={title}
-                className="action-btn"
+              <button key={title} onClick={onClick} title={title} className="action-btn"
                 style={{ padding: 8, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 8, cursor: 'pointer', color: 'rgba(255,255,255,0.35)', display: 'flex' }}
                 onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = hoverColor; (e.currentTarget as HTMLElement).style.borderColor = `${hoverColor}40` }}
                 onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = 'rgba(255,255,255,0.35)'; (e.currentTarget as HTMLElement).style.borderColor = 'rgba(255,255,255,0.07)' }}>
@@ -726,14 +542,10 @@ function NoteViewer({ note, meetings, onEdit, onArchive, onDelete, onToggleCheck
             ))}
           </div>
         </div>
-
-        {/* Progress bar for checkboxes */}
         {total > 0 && (
-          <div style={{ marginTop: 4 }}>
+          <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 5 }}>
-              <span style={{ fontSize: 10, color: progress === 100 ? '#1D9E75' : 'rgba(255,255,255,0.3)', fontFamily: "'IBM Plex Mono', monospace" }}>
-                {checked}/{total} tâches complétées
-              </span>
+              <span style={{ fontSize: 10, color: progress === 100 ? '#1D9E75' : 'rgba(255,255,255,0.3)', fontFamily: "'IBM Plex Mono', monospace" }}>{checked}/{total} tâches</span>
               {progress === 100 && <span style={{ fontSize: 9, color: '#1D9E75', background: '#1D9E7515', borderRadius: 3, padding: '1px 5px', fontFamily: "'IBM Plex Mono', monospace" }}>TERMINÉ ✓</span>}
             </div>
             <div style={{ height: 3, background: 'rgba(255,255,255,0.06)', borderRadius: 99, overflow: 'hidden' }}>
@@ -742,17 +554,13 @@ function NoteViewer({ note, meetings, onEdit, onArchive, onDelete, onToggleCheck
           </div>
         )}
       </div>
-
-      {/* Content */}
       <div style={{ flex: 1, overflowY: 'auto', padding: '24px 28px' }}>
         {note.content ? (
-          <div style={{ maxWidth: 700 }}>
-            {renderContent(note.content)}
-          </div>
+          <div style={{ maxWidth: 720 }}>{renderMarkdown(note.content, onToggleCheckbox)}</div>
         ) : (
           <div style={{ textAlign: 'center', padding: '60px 0', color: 'rgba(255,255,255,0.12)' }}>
             <BookOpen style={{ width: 36, height: 36, margin: '0 auto 12px', display: 'block', opacity: 0.2 }} />
-            <p style={{ fontSize: 13, fontFamily: "'IBM Plex Mono', monospace" }}>Note vide — cliquez sur Modifier pour ajouter du contenu</p>
+            <p style={{ fontSize: 13, fontFamily: "'IBM Plex Mono', monospace" }}>Note vide — cliquez sur Modifier</p>
           </div>
         )}
       </div>
@@ -777,12 +585,10 @@ export function NotesPage() {
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
   const [view, setView] = useState<'list' | 'kanban'>('list')
 
-  // Global keyboard shortcut: Cmd+N
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 'n' && !creating && !editing) {
-        e.preventDefault()
-        setCreating(true); setSelectedId(null); setEditing(false)
+        e.preventDefault(); setCreating(true); setSelectedId(null); setEditing(false)
       }
     }
     window.addEventListener('keydown', handler)
@@ -791,29 +597,27 @@ export function NotesPage() {
 
   const filtered = useMemo(() => {
     if (!notes) return []
-    return notes.filter(n => {
+    return notes.filter((n: any) => {
       if (n.is_archived !== showArchived) return false
       if (filterTag && !(n.tags ?? []).includes(filterTag)) return false
       if (!search) return true
       const q = search.toLowerCase()
-      return n.title.toLowerCase().includes(q) ||
-        (n.content ?? '').toLowerCase().includes(q) ||
-        (n.tags ?? []).some((t: string) => t.toLowerCase().includes(q))
+      return n.title.toLowerCase().includes(q) || (n.content ?? '').toLowerCase().includes(q) || (n.tags ?? []).some((t: string) => t.toLowerCase().includes(q))
     })
   }, [notes, search, filterTag, showArchived])
 
-  const selected = notes?.find(n => n.id === selectedId) ?? filtered[0] ?? null
+  const selected = notes?.find((n: any) => n.id === selectedId) ?? filtered[0] ?? null
 
   const allTags = useMemo(() => {
     const tagSet = new Set<string>()
-    notes?.forEach(n => (n.tags ?? []).forEach((t: string) => tagSet.add(t)))
+    notes?.forEach((n: any) => (n.tags ?? []).forEach((t: string) => tagSet.add(t)))
     return Array.from(tagSet)
   }, [notes])
 
   const stats = useMemo(() => ({
-    total: notes?.filter(n => !n.is_archived).length ?? 0,
-    archived: notes?.filter(n => n.is_archived).length ?? 0,
-    withMeeting: notes?.filter(n => !n.is_archived && n.for_meeting_date).length ?? 0,
+    total: notes?.filter((n: any) => !n.is_archived).length ?? 0,
+    archived: notes?.filter((n: any) => n.is_archived).length ?? 0,
+    withMeeting: notes?.filter((n: any) => !n.is_archived && n.for_meeting_date).length ?? 0,
   }), [notes])
 
   const handleCreate = async (data: any) => {
@@ -854,7 +658,7 @@ export function NotesPage() {
     if (!notes) return []
     const tagGroups: Record<string, any[]> = { 'Sans tag': [] }
     TAG_PRESETS.forEach(t => { tagGroups[t.label] = [] })
-    filtered.forEach(n => {
+    filtered.forEach((n: any) => {
       const tags = n.tags ?? []
       if (tags.length === 0) { tagGroups['Sans tag'].push(n); return }
       tags.forEach((t: string) => { if (tagGroups[t]) tagGroups[t].push(n) })
@@ -868,7 +672,6 @@ export function NotesPage() {
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: '#090b12', overflow: 'hidden', fontFamily: "'IBM Plex Mono', monospace" }}>
       <style>{GLOBAL_STYLES}</style>
 
-      {/* Delete confirm modal */}
       {deleteConfirm && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.8)', backdropFilter: 'blur(4px)' }}>
           <div style={{ background: '#131620', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 14, padding: 24, maxWidth: 320, width: '100%', margin: '0 16px', animation: 'fadeIn 0.15s ease' }}>
@@ -878,28 +681,16 @@ export function NotesPage() {
             <h3 style={{ fontSize: 14, fontWeight: 700, color: '#fff', marginBottom: 6, fontFamily: "'Syne', sans-serif" }}>Supprimer cette note ?</h3>
             <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)', marginBottom: 20 }}>Cette action est irréversible.</p>
             <div style={{ display: 'flex', gap: 8 }}>
-              <button onClick={() => setDeleteConfirm(null)} style={{ flex: 1, padding: '9px 0', fontSize: 12, color: 'rgba(255,255,255,0.4)', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 9, cursor: 'pointer' }}>
-                Annuler
-              </button>
-              <button onClick={() => handleDelete(deleteConfirm)} style={{ flex: 1, padding: '9px 0', fontSize: 12, fontWeight: 700, color: '#fff', background: '#E24B4A', border: 'none', borderRadius: 9, cursor: 'pointer' }}>
-                Supprimer
-              </button>
+              <button onClick={() => setDeleteConfirm(null)} style={{ flex: 1, padding: '9px 0', fontSize: 12, color: 'rgba(255,255,255,0.4)', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 9, cursor: 'pointer' }}>Annuler</button>
+              <button onClick={() => handleDelete(deleteConfirm)} style={{ flex: 1, padding: '9px 0', fontSize: 12, fontWeight: 700, color: '#fff', background: '#E24B4A', border: 'none', borderRadius: 9, cursor: 'pointer' }}>Supprimer</button>
             </div>
           </div>
         </div>
       )}
 
       {/* Topbar */}
-      <div style={{
-        flexShrink: 0, padding: '0 20px', height: 50,
-        borderBottom: '1px solid rgba(255,255,255,0.05)',
-        background: 'rgba(9,11,18,0.95)', backdropFilter: 'blur(8px)',
-        display: 'flex', alignItems: 'center', gap: 10,
-        position: 'sticky', top: 0, zIndex: 10,
-      }}>
-        <span style={{ fontSize: 13, fontWeight: 700, color: '#fff', fontFamily: "'Syne', sans-serif", letterSpacing: '-0.02em' }}>
-          Notes
-        </span>
+      <div style={{ flexShrink: 0, padding: '0 20px', height: 50, borderBottom: '1px solid rgba(255,255,255,0.05)', background: 'rgba(9,11,18,0.95)', backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', gap: 10, position: 'sticky', top: 0, zIndex: 10 }}>
+        <span style={{ fontSize: 13, fontWeight: 700, color: '#fff', fontFamily: "'Syne', sans-serif", letterSpacing: '-0.02em' }}>Notes</span>
         <div style={{ display: 'flex', gap: 6 }}>
           {[
             { label: `${stats.total}`, suffix: ' notes', color: '#1D9E75' },
@@ -911,7 +702,6 @@ export function NotesPage() {
             </span>
           ))}
         </div>
-
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center' }}>
           <div style={{ display: 'flex', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 7, overflow: 'hidden' }}>
             {([['list', List], ['kanban', LayoutGrid]] as const).map(([v, Icon]) => (
@@ -921,18 +711,16 @@ export function NotesPage() {
               </button>
             ))}
           </div>
-
-          <button onClick={() => setShowArchived(!showArchived)}
-            className="action-btn"
+          <button onClick={() => setShowArchived(!showArchived)} className="action-btn"
             style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 10px', background: showArchived ? 'rgba(255,255,255,0.07)' : 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 7, color: 'rgba(255,255,255,0.4)', fontSize: 11, cursor: 'pointer' }}>
             <Archive style={{ width: 11, height: 11 }} />
             {showArchived ? 'Actives' : 'Archivées'}
           </button>
           <button onClick={() => { setCreating(true); setSelectedId(null); setEditing(false) }}
-            style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 12px', background: '#1D9E75', border: 'none', borderRadius: 7, color: '#fff', fontSize: 11, fontWeight: 600, cursor: 'pointer', transition: 'opacity 0.12s' }}
+            style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 12px', background: '#1D9E75', border: 'none', borderRadius: 7, color: '#fff', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}
             onMouseEnter={e => (e.currentTarget as HTMLElement).style.opacity = '0.85'}
             onMouseLeave={e => (e.currentTarget as HTMLElement).style.opacity = '1'}>
-            <Plus style={{ width: 11, height: 11 }} /> Nouvelle <span style={{ opacity: 0.6, fontSize: 9, fontFamily: "'IBM Plex Mono', monospace" }}>⌘N</span>
+            <Plus style={{ width: 11, height: 11 }} /> Nouvelle <span style={{ opacity: 0.6, fontSize: 9 }}>⌘N</span>
           </button>
         </div>
       </div>
@@ -948,7 +736,6 @@ export function NotesPage() {
               {search && <button onClick={() => setSearch('')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'rgba(255,255,255,0.3)', display: 'flex' }}><X style={{ width: 10, height: 10 }} /></button>}
             </div>
           </div>
-
           {allTags.length > 0 && (
             <div style={{ padding: '0 10px 8px', display: 'flex', gap: 4, flexWrap: 'wrap' }}>
               <button onClick={() => setFilterTag(null)}
@@ -967,7 +754,6 @@ export function NotesPage() {
               })}
             </div>
           )}
-
           <div style={{ flex: 1, overflowY: 'auto' }}>
             {isLoading && <div style={{ display: 'flex', justifyContent: 'center', padding: 40 }}><Spinner /></div>}
             {!isLoading && filtered.length === 0 && (
@@ -975,7 +761,7 @@ export function NotesPage() {
                 {search || filterTag ? 'Aucun résultat' : showArchived ? 'Aucune note archivée' : 'Aucune note'}
               </div>
             )}
-            {filtered.map(n => (
+            {filtered.map((n: any) => (
               <NoteCard key={n.id} note={n} meetings={meetings ?? []} search={search}
                 isSelected={(selectedId ?? filtered[0]?.id) === n.id}
                 onClick={() => { setSelectedId(n.id); setCreating(false); setEditing(false) }}
@@ -991,17 +777,10 @@ export function NotesPage() {
           ) : editing && selected ? (
             <NoteEditor note={selected} meetings={meetings ?? []} onSave={handleUpdate} onClose={() => setEditing(false)} />
           ) : selected && view === 'list' ? (
-            <NoteViewer
-              note={selected}
-              meetings={meetings ?? []}
-              onEdit={() => setEditing(true)}
-              onArchive={toggleArchive}
-              onDelete={() => setDeleteConfirm(selected.id)}
-              onToggleCheckbox={handleToggleCheckbox}
-            />
+            <NoteViewer note={selected} meetings={meetings ?? []} onEdit={() => setEditing(true)} onArchive={toggleArchive} onDelete={() => setDeleteConfirm(selected.id)} onToggleCheckbox={handleToggleCheckbox} />
           ) : selected === null && view === 'list' ? (
-            <div style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16, color: 'rgba(255,255,255,0.12)' }}>
-              <FileText style={{ width: 44, height: 44, opacity: 0.15 }} />
+            <div style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16 }}>
+              <FileText style={{ width: 44, height: 44, opacity: 0.1 }} />
               <div style={{ textAlign: 'center' }}>
                 <p style={{ fontSize: 14, margin: '0 0 6px', fontFamily: "'Syne', sans-serif", color: 'rgba(255,255,255,0.25)' }}>Sélectionnez une note</p>
                 <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.12)', fontFamily: "'IBM Plex Mono', monospace" }}>ou créez-en une nouvelle avec ⌘N</p>
@@ -1012,30 +791,24 @@ export function NotesPage() {
               </button>
             </div>
           ) : view === 'kanban' ? (
-            <div style={{ flex: 1, overflowX: 'auto', overflowY: 'hidden', display: 'flex', gap: 0, padding: '20px', height: '100%' }}>
+            <div style={{ flex: 1, overflowX: 'auto', overflowY: 'hidden', display: 'flex', padding: '20px', height: '100%' }}>
               {kanbanColumns.map(col => (
                 <div key={col.label} style={{ width: 240, flexShrink: 0, marginRight: 14, display: 'flex', flexDirection: 'column', height: '100%' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 10 }}>
-                    <div style={{ width: 8, height: 8, borderRadius: 2, background: col.color, flexShrink: 0 }} />
-                    <span style={{ fontSize: 10.5, fontWeight: 600, color: col.color, fontFamily: "'IBM Plex Mono', monospace", letterSpacing: '0.06em' }}>
-                      {col.label.toUpperCase()}
-                    </span>
+                    <div style={{ width: 8, height: 8, borderRadius: 2, background: col.color }} />
+                    <span style={{ fontSize: 10.5, fontWeight: 600, color: col.color, fontFamily: "'IBM Plex Mono', monospace", letterSpacing: '0.06em' }}>{col.label.toUpperCase()}</span>
                     <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.25)', background: 'rgba(255,255,255,0.05)', borderRadius: 3, padding: '1px 5px', marginLeft: 'auto', fontFamily: "'IBM Plex Mono', monospace" }}>{col.notes.length}</span>
                   </div>
                   <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
-                    {col.notes.map(n => (
+                    {col.notes.map((n: any) => (
                       <button key={n.id}
                         onClick={() => { setView('list'); setSelectedId(n.id); setCreating(false); setEditing(false) }}
-                        style={{
-                          background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)',
-                          borderRadius: 10, padding: '12px 14px', cursor: 'pointer',
-                          textAlign: 'left', transition: 'all 0.13s', display: 'block', width: '100%',
-                        }}
+                        style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 10, padding: '12px 14px', cursor: 'pointer', textAlign: 'left', transition: 'all 0.13s', display: 'block', width: '100%' }}
                         onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.06)'; (e.currentTarget as HTMLElement).style.borderColor = `${col.color}30` }}
                         onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.03)'; (e.currentTarget as HTMLElement).style.borderColor = 'rgba(255,255,255,0.07)' }}>
                         <div style={{ fontSize: 12, fontWeight: 700, color: '#fff', marginBottom: 5, fontFamily: "'Syne', sans-serif", lineHeight: 1.3 }}>{n.title}</div>
                         {n.content && <div style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.3)', lineHeight: 1.5, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', fontFamily: "'IBM Plex Mono', monospace" }}>
-                          {n.content.replace(/[☐☑#]/g, '').trim()}
+                          {n.content.replace(/[☐☑#*>-]/g, '').trim()}
                         </div>}
                         <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
                           <span style={{ fontSize: 9.5, color: 'rgba(255,255,255,0.2)', fontFamily: "'IBM Plex Mono', monospace" }}>{fRelative(n.created_at)}</span>
